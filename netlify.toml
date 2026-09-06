@@ -4,6 +4,7 @@
 
 [functions]
   directory = "netlify/functions"
+  included_files = ["public/index.json"]
 
 [[redirects]]
   from = "/search"
@@ -16,13 +17,8 @@
   status = 200
 
 [[redirects]]
-  from = "/api/private/*"
+  from = "/api/private/blobs"
   to = "/.netlify/functions/private"
-  status = 200
-
-[[redirects]]
-  from = "/health"
-  to = "/.netlify/functions/health"
   status = 200
 
 [build.environment]
