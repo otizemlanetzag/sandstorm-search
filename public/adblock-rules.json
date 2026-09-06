@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "blocked_host_patterns": [
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "googletagmanager.com",
+    "google-analytics.com",
+    "googletagservices.com",
+    "adservice.google.com",
+    "adnxs.com",
+    "adsrvr.org",
+    "adform.net",
+    "criteo.com",
+    "criteo.net",
+    "taboola.com",
+    "outbrain.com",
+    "zedo.com",
+    "scorecardresearch.com",
+    "rubiconproject.com",
+    "pubmatic.com",
+    "openx.net",
+    "casalemedia.com",
+    "moatads.com"
+  ],
+  "blocked_url_patterns": [
+    "/ads/",
+    "/adserver/",
+    "/advertising/",
+    "/banner/",
+    "/banners/",
+    "/doubleclick/",
+    "/pagead/"
+  ]
+}
