@@ -52,6 +52,23 @@ blobs through the application endpoint.
 The capability is intentionally separate from the AES key. Compromise of one
 secret must not automatically reveal the other.
 
+## Web security headers
+
+The Netlify deployment sends a restrictive baseline security policy for all
+published routes, including:
+
+- Content Security Policy restricting scripts, styles, connections, frames,
+  objects, forms, and base URLs to the intended origins.
+- `X-Frame-Options: DENY` to prevent framing.
+- `X-Content-Type-Options: nosniff`.
+- A strict cross-origin referrer policy.
+- A restrictive Permissions Policy disabling unnecessary browser capabilities.
+- HSTS for HTTPS deployments.
+
+The CSP is part of the security boundary: adding an inline script, third-party
+script, external stylesheet, image, font, API, or frame requires an intentional
+policy change rather than silently expanding the attack surface.
+
 ## Cryptography
 
 The reference client implementation uses the Web Crypto API with AES-256-GCM
@@ -89,6 +106,7 @@ not replace application-level authorization or client-side encryption.
 - The private endpoint returns `Cache-Control: no-store` and
   `X-Content-Type-Options: nosniff`.
 - The server must not log encryption keys or raw capabilities.
+- Public search query length and result count are bounded.
 
 ## Key handling
 
