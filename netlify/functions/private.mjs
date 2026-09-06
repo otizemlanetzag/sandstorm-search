@@ -2,10 +2,11 @@ import { getStore } from "@netlify/blobs";
 import { createHash } from "node:crypto";
 
 const store = getStore("sandstorm-private");
-const MAX_BLOB = 20_000_000;
-const MAX_RESULTS = 5000;
+const MAX_BLOB = 4_000_000;
+const MAX_PAGE = 100;
 const CAPABILITY_RE = /^[A-Za-z0-9_-]{43}$/;
 const CIPHERTEXT_RE = /^[A-Za-z0-9_-]+$/;
+const KEY_RE = /^[a-f0-9]{64}$/;
 
 function json(data, status = 200) {
   return Response.json(data, {
@@ -29,21 +30,27 @@ function idFor(blob) {
 
 function getCapability(req) {
   const value = req.headers.get("x-private-capability");
-  // 32 random bytes encoded as unpadded base64url are exactly 43 characters.
   return typeof value === "string" && CAPABILITY_RE.test(value) ? value : null;
+}
+
+function pagination(req) {
+  const params = new URL(req.url).searchParams;
+  const rawLimit = params.get("limit");
+  const rawCursor = params.get("cursor");
+  const limit = rawLimit === null ? MAX_PAGE : Number(rawLimit);
+  const cursor = rawCursor === null || rawCursor === "" ? "" : rawCursor;
+
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE) return null;
+  if (cursor && !KEY_RE.test(cursor)) return null;
+  return { limit, cursor };
 }
 
 export default async (req) => {
   const method = req.method.toUpperCase();
   const capability = getCapability(req);
 
-  if (!capability) {
-    return json({ detail: "A valid private capability is required." }, 401);
-  }
-
-  if (method !== "GET" && method !== "POST") {
-    return json({ detail: "Method not allowed" }, 405);
-  }
+  if (!capability) return json({ detail: "A valid private capability is required." }, 401);
+  if (method !== "GET" && method !== "POST") return json({ detail: "Method not allowed" }, 405);
 
   const capabilityHash = hashCapability(capability);
   const prefix = `${capabilityHash}/`;
@@ -54,35 +61,38 @@ export default async (req) => {
       return json({ detail: "JSON is required." }, 415);
     }
 
+    const contentLength = Number(req.headers.get("content-length") || "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_BLOB + 2048) {
+      return json({ detail: "Request too large." }, 413);
+    }
+
     const body = await req.json().catch(() => null);
     const blob = body?.blob;
-
-    if (
-      typeof blob !== "string" ||
-      blob.length === 0 ||
-      blob.length > MAX_BLOB ||
-      !CIPHERTEXT_RE.test(blob)
-    ) {
+    if (typeof blob !== "string" || blob.length === 0 || blob.length > MAX_BLOB || !CIPHERTEXT_RE.test(blob)) {
       return json({ detail: "Invalid ciphertext" }, 400);
     }
 
     const id = idFor(blob);
-    const key = `${prefix}${id}`;
-    await store.set(key, blob, { onlyIfNew: true });
+    await store.set(`${prefix}${id}`, blob, { onlyIfNew: true });
     return json({ id });
   }
 
-  // GET is always scoped to the caller's capability namespace. There is no
-  // application-level operation that lists the complete private store.
-  const { blobs } = await store.list({ prefix });
+  const page = pagination(req);
+  if (!page) return json({ detail: "Invalid pagination parameters." }, 400);
+
+  const listing = await store.list({ prefix, cursor: page.cursor, limit: page.limit });
   const results = [];
 
-  for (const item of blobs.slice(0, MAX_RESULTS)) {
+  for (const item of listing.blobs) {
     const blob = await store.get(item.key);
-    if (typeof blob === "string" && CIPHERTEXT_RE.test(blob) && blob.length <= MAX_BLOB) {
+    if (typeof blob === "string" && blob.length <= MAX_BLOB && CIPHERTEXT_RE.test(blob)) {
       results.push({ id: item.key.slice(prefix.length), blob });
     }
   }
 
-  return json({ results });
+  return json({
+    results,
+    cursor: listing.cursor || null,
+    hasMore: Boolean(listing.cursor)
+  });
 };
