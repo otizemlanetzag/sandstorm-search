@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .main import db
-
 ROOT = Path(__file__).resolve().parent.parent
+DB = ROOT / "data" / "search.db"
 OUT = ROOT / "public" / "index.json"
 
 
 def main() -> None:
     OUT.parent.mkdir(exist_ok=True)
+    if not DB.exists():
+        print("No data/search.db found; keeping the existing public/index.json.")
+        return
+
+    from .main import db
+
     conn = db()
     try:
         rows = conn.execute(
@@ -30,10 +36,11 @@ def main() -> None:
         }
         for row in rows
     ]
-    OUT.write_text(
-        json.dumps({"generated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "pages": pages}, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pages": pages,
+    }
+    OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     print(f"Exported {len(pages)} pages to {OUT}")
 
 
