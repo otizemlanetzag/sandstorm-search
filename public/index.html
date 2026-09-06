@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sandstorm Search</title><link rel="stylesheet" href="/styles.css"></head>
+<body><header><h1>Sandstorm</h1><p>Search pages indexed from Common Crawl · private by design</p></header>
+<form class="search" method="get" action="/search"><input name="q" autofocus placeholder="Search the web..."><button>Search</button></form>
+<section class="private"><div class="private-title">🔒 Zero-Knowledge Private Search</div><p class="warning">Private notes are encrypted in your browser with AES-256-GCM. The server receives ciphertext only. The session key is never sent to Netlify.</p><div class="private-actions"><button type="button" id="unlock">Unlock / create session key</button><button type="button" id="lock">Lock now</button></div><input id="privateText" placeholder="Private note to encrypt" disabled><div class="private-actions"><button type="button" id="save" disabled>Encrypt &amp; save</button><button type="button" id="load" disabled>Load &amp; search locally</button></div><input id="privateQuery" placeholder="Search your private notes..." disabled><div id="status" class="status">Locked. The private key is not available to this page.</div><div id="privateResults"></div></section>
+<script src="/private.js" defer></script></body></html>
