@@ -6,6 +6,12 @@
   directory = "netlify/functions"
   included_files = ["public/index.json"]
 
+[functions."private"]
+  timeout = 10
+
+[functions."search"]
+  timeout = 5
+
 [[redirects]]
   from = "/search"
   to = "/.netlify/functions/search"
