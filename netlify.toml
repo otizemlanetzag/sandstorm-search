@@ -1,0 +1,29 @@
+[build]
+  publish = "public"
+  command = "python -m backend.export_index"
+
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/search"
+  to = "/.netlify/functions/search"
+  status = 200
+
+[[redirects]]
+  from = "/api/search"
+  to = "/.netlify/functions/search"
+  status = 200
+
+[[redirects]]
+  from = "/api/private/*"
+  to = "/.netlify/functions/private"
+  status = 200
+
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[build.environment]
+  PYTHON_VERSION = "3.12"
