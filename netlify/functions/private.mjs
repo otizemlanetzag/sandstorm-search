@@ -3,15 +3,18 @@ import { createHash } from "node:crypto";
 
 const store = getStore("sandstorm-private");
 const MAX_BLOB = 20_000_000;
-const CAPABILITY_BYTES = 32;
 const MAX_RESULTS = 5000;
+const CAPABILITY_RE = /^[A-Za-z0-9_-]{43}$/;
+const CIPHERTEXT_RE = /^[A-Za-z0-9_-]+$/;
 
 function json(data, status = 200) {
   return Response.json(data, {
     status,
     headers: {
       "cache-control": "no-store",
-      "x-content-type-options": "nosniff"
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'"
     }
   });
 }
@@ -26,9 +29,8 @@ function idFor(blob) {
 
 function getCapability(req) {
   const value = req.headers.get("x-private-capability");
-  // 32 random bytes encoded as unpadded base64url are 43 characters.
-  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value)) return null;
-  return value;
+  // 32 random bytes encoded as unpadded base64url are exactly 43 characters.
+  return typeof value === "string" && CAPABILITY_RE.test(value) ? value : null;
 }
 
 export default async (req) => {
@@ -39,44 +41,48 @@ export default async (req) => {
     return json({ detail: "A valid private capability is required." }, 401);
   }
 
+  if (method !== "GET" && method !== "POST") {
+    return json({ detail: "Method not allowed" }, 405);
+  }
+
   const capabilityHash = hashCapability(capability);
   const prefix = `${capabilityHash}/`;
 
   if (method === "POST") {
+    const contentType = req.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      return json({ detail: "JSON is required." }, 415);
+    }
+
     const body = await req.json().catch(() => null);
     const blob = body?.blob;
 
     if (
       typeof blob !== "string" ||
-      !blob ||
+      blob.length === 0 ||
       blob.length > MAX_BLOB ||
-      !/^[A-Za-z0-9_-]+$/.test(blob)
+      !CIPHERTEXT_RE.test(blob)
     ) {
       return json({ detail: "Invalid ciphertext" }, 400);
     }
 
     const id = idFor(blob);
     const key = `${prefix}${id}`;
-
     await store.set(key, blob, { onlyIfNew: true });
     return json({ id });
   }
 
-  if (method === "GET") {
-    // The capability hash is used as a server-side namespace. The raw
-    // capability is never stored, and there is no unscoped list operation.
-    const { blobs } = await store.list({ prefix });
-    const results = [];
+  // GET is always scoped to the caller's capability namespace. There is no
+  // application-level operation that lists the complete private store.
+  const { blobs } = await store.list({ prefix });
+  const results = [];
 
-    for (const item of blobs.slice(0, MAX_RESULTS)) {
-      const blob = await store.get(item.key);
-      if (typeof blob === "string") {
-        results.push({ id: item.key.slice(prefix.length), blob });
-      }
+  for (const item of blobs.slice(0, MAX_RESULTS)) {
+    const blob = await store.get(item.key);
+    if (typeof blob === "string" && CIPHERTEXT_RE.test(blob) && blob.length <= MAX_BLOB) {
+      results.push({ id: item.key.slice(prefix.length), blob });
     }
-
-    return json({ results });
   }
 
-  return json({ detail: "Method not allowed" }, 405);
+  return json({ results });
 };
