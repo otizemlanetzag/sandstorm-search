@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Opaque encrypted blob storage.
 
-The server intentionally treats payloads as bytes. It does not receive or
-handle the user's encryption key and cannot search the plaintext. A real
-client encrypts locally with backend/e2e_crypto.py and uploads only ciphertext.
+The server intentionally treats payloads as ciphertext. It never receives a
+user encryption key and cannot search the plaintext. Search over these blobs
+is performed after decryption in the browser.
 """
 
 import hashlib
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
+DATA.mkdir(exist_ok=True)
 DB = DATA / "private.db"
 
 router = APIRouter(prefix="/api/private", tags=["private"])
@@ -35,7 +36,6 @@ def db() -> sqlite3.Connection:
 
 
 def blob_id(blob: str) -> str:
-    # Content addressing avoids storing plaintext-derived metadata.
     return hashlib.sha256(blob.encode("ascii")).hexdigest()
 
 
@@ -53,6 +53,18 @@ def put_blob(payload: EncryptedBlob):
     finally:
         conn.close()
     return {"id": ident}
+
+
+@router.get("/blobs")
+def list_blobs(limit: int = 500):
+    """Return ciphertext only. No plaintext metadata is stored or returned."""
+    limit = max(1, min(limit, 5000))
+    conn = db()
+    try:
+        rows = conn.execute("SELECT id, blob FROM blobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    finally:
+        conn.close()
+    return {"results": [{"id": row[0], "blob": row[1]} for row in rows]}
 
 
 @router.get("/blobs/{ident}")
