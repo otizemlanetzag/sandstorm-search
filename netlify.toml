@@ -12,20 +12,25 @@
 [functions."search"]
   timeout = 5
 
+# Rewrite search/private API paths to the normal Netlify Function endpoints.
+# force=true makes the routing deterministic even if a static path is present.
 [[redirects]]
   from = "/search"
   to = "/.netlify/functions/search"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/api/search"
   to = "/.netlify/functions/search"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/api/private/blobs"
   to = "/.netlify/functions/private"
   status = 200
+  force = true
 
 [[headers]]
   for = "/*"
