@@ -1,0 +1,4 @@
+# Domains that the scheduled indexer refreshes from Common Crawl.
+# Add one hostname per line; this file deliberately keeps the crawl bounded.
+example.com
+wikipedia.org
