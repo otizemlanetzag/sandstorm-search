@@ -7,8 +7,9 @@ const MAX_TERM = 64;
 const MAX_RESULTS = 50;
 const SAFE_URL = /^(https?):$/i;
 
+// Keep the function on Netlify's normal function route. Custom routing is
+// handled centrally by netlify.toml so /search and /api/search both work.
 export const config = {
-  path: "/api/search",
   rateLimit: {
     windowLimit: 120,
     windowSize: 60,
