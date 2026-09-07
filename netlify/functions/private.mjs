@@ -9,8 +9,9 @@ const CAPABILITY_RE = /^[A-Za-z0-9_-]{43}$/;
 const CIPHERTEXT_RE = /^[A-Za-z0-9_-]+$/;
 const KEY_RE = /^[a-f0-9]{64}$/;
 
+// Keep the function on Netlify's normal function route. Custom routing is
+// handled centrally by netlify.toml so /api/private/blobs works reliably.
 export const config = {
-  path: "/api/private/blobs",
   rateLimit: {
     windowLimit: 60,
     windowSize: 60,
@@ -52,7 +53,7 @@ function pagination(req) {
   const cursor = rawCursor === null || rawCursor === "" ? "" : rawCursor;
 
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE) return null;
-  if (cursor.length > MAX_CURSOR) return null;
+  if (cursor.length > MAX_CURSOR || (cursor && !KEY_RE.test(cursor))) return null;
   return { limit, cursor };
 }
 
@@ -91,22 +92,35 @@ export default async (req) => {
   const page = pagination(req);
   if (!page) return json({ detail: "Invalid pagination parameters." }, 400);
 
-  const listing = await store.list({ prefix, cursor: page.cursor, limit: page.limit });
+  // Current @netlify/blobs pagination is exposed through an async iterator.
+  // We keep our own opaque cursor (the last key returned) so the browser API
+  // remains stable without relying on removed cursor/limit list arguments.
+  const listing = await store.list({ prefix });
+  const keys = listing.blobs
+    .map(item => item?.key)
+    .filter(key => typeof key === "string" && key.startsWith(prefix))
+    .map(key => key.slice(prefix.length))
+    .filter(id => KEY_RE.test(id))
+    .sort();
+
+  const start = page.cursor ? keys.findIndex(id => id > page.cursor) : 0;
+  const offset = start < 0 ? keys.length : start;
+  const selected = keys.slice(offset, offset + page.limit);
   const results = [];
 
-  for (const item of listing.blobs) {
-    if (!item.key.startsWith(prefix)) continue;
-    const id = item.key.slice(prefix.length);
-    if (!KEY_RE.test(id)) continue;
-    const blob = await store.get(item.key);
+  for (const id of selected) {
+    const blob = await store.get(`${prefix}${id}`);
     if (typeof blob === "string" && blob.length <= MAX_BLOB && CIPHERTEXT_RE.test(blob)) {
       results.push({ id, blob });
     }
   }
 
+  const lastReturned = selected[selected.length - 1] || null;
+  const hasMore = offset + selected.length < keys.length;
+
   return json({
     results,
-    cursor: listing.cursor || null,
-    hasMore: Boolean(listing.cursor)
+    cursor: hasMore ? lastReturned : null,
+    hasMore
   });
 };
