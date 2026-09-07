@@ -2,5 +2,5 @@ fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 requests>=2.32,<3
 beautifulsoup4>=4.12,<5
-warcio>=1.7,<2
+warcio>=1.8.1,<2
 cryptography>=44,<47
