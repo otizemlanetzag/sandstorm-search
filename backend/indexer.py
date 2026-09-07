@@ -100,6 +100,23 @@ def fetch_warc(record):
     return b""
 
 
+def _insert_record(conn: sqlite3.Connection, rec, discover: bool):
+    url = rec["url"]
+    if conn.execute("SELECT 1 FROM pages WHERE url=? LIMIT 1", (url,)).fetchone():
+        return 0, []
+    body = fetch_warc(rec)
+    if not body:
+        return 0, []
+    title, description, text, soup = parse_html(body)
+    domain = urlparse(url).netloc.lower()
+    conn.execute(
+        "INSERT INTO pages(url,title,description,content,domain,crawled_at) VALUES(?,?,?,?,?,?)",
+        (url, title, description, text, domain, rec.get("timestamp", "")),
+    )
+    links = discover_links(soup, url, 50) if discover else []
+    return 1, links
+
+
 def index(pattern: str, limit: int, discover: bool = False):
     conn = database()
     count = 0
@@ -107,22 +124,10 @@ def index(pattern: str, limit: int, discover: bool = False):
     try:
         for rec in query_index(pattern, limit):
             try:
-                url = rec["url"]
-                if conn.execute("SELECT 1 FROM pages WHERE url=? LIMIT 1", (url,)).fetchone():
-                    continue
-                body = fetch_warc(rec)
-                if not body:
-                    continue
-                title, description, text, soup = parse_html(body)
-                domain = urlparse(url).netloc.lower()
-                conn.execute(
-                    "INSERT INTO pages(url,title,description,content,domain,crawled_at) VALUES(?,?,?,?,?,?)",
-                    (url, title, description, text, domain, rec.get("timestamp", "")),
-                )
-                count += 1
-                if discover:
-                    discovered.update(discover_links(soup, url, 50))
-                if count % 10 == 0:
+                added, links = _insert_record(conn, rec, discover)
+                count += added
+                discovered.update(links)
+                if count and count % 10 == 0:
                     conn.commit()
                     print(f"indexed {count}; discovered {len(discovered)} links")
             except Exception as exc:
@@ -131,6 +136,30 @@ def index(pattern: str, limit: int, discover: bool = False):
     finally:
         conn.close()
     print(f"done: {count} pages; discovered {len(discovered)} links")
+    return discovered
+
+
+def index_urls(urls, discover: bool = True):
+    """Index specific discovered URLs, rather than re-querying an entire domain."""
+    conn = database()
+    count = 0
+    discovered = set()
+    try:
+        for url in dict.fromkeys(urls):
+            try:
+                for rec in query_index(url, 1):
+                    added, links = _insert_record(conn, rec, discover)
+                    count += added
+                    discovered.update(links)
+                    break
+            except Exception as exc:
+                print(f"skip {url}: {exc}")
+            if count and count % 10 == 0:
+                conn.commit()
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"exact-url indexing: {count} pages; discovered {len(discovered)} links")
     return discovered
 
 
