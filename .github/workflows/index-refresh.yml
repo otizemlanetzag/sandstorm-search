@@ -1,0 +1,47 @@
+name: Refresh search index
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: search-index-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install indexer dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh bounded Common Crawl index
+        run: python -m backend.refresh_index --per-domain 10
+
+      - name: Export search index
+        run: python -m backend.export_index
+
+      - name: Commit refreshed index
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/search.db public/index.json
+          if git diff --cached --quiet; then
+            echo "No index changes to commit."
+          else
+            git commit -m "chore: refresh Common Crawl search index"
+            git push
+          fi
