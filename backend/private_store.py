@@ -4,8 +4,8 @@ from __future__ import annotations
 
 The local API mirrors the Netlify capability model: the client supplies a
 random 256-bit capability, while the server stores only its SHA-256 hash.
-This prevents source-code knowledge or predictable blob IDs from granting
-access to another client's namespace.
+Blob IDs are also capability-scoped, so identical ciphertext in two
+namespaces cannot collide in the local database.
 """
 
 import hashlib
@@ -61,8 +61,8 @@ def capability_hash(capability: str) -> str:
     return hashlib.sha256(capability.encode("ascii")).hexdigest()
 
 
-def blob_id(blob: str) -> str:
-    return hashlib.sha256(blob.encode("ascii")).hexdigest()
+def blob_id(blob: str, owner: str) -> str:
+    return hashlib.sha256(f"{owner}:{blob}".encode("ascii")).hexdigest()
 
 
 @router.post("/blobs")
@@ -70,8 +70,8 @@ def put_blob(payload: EncryptedBlob, x_private_capability: str | None = Header(d
     capability = validate_capability(x_private_capability)
     if not BLOB_RE.fullmatch(payload.blob):
         raise HTTPException(status_code=400, detail="Invalid ciphertext")
-    ident = blob_id(payload.blob)
     owner = capability_hash(capability)
+    ident = blob_id(payload.blob, owner)
     conn = db()
     try:
         conn.execute(
