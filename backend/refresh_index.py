@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .indexer import database, index
+from .indexer import database, index_urls
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SEEDS = ROOT / "data" / "index-seeds.txt"
@@ -72,15 +72,11 @@ def mark(conn: sqlite3.Connection, url: str, state: str) -> None:
     conn.commit()
 
 
-def domain_pattern(url: str) -> str:
-    return f"{urlparse(url).netloc.lower()}/*"
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Refresh Sandstorm's search index using a bounded URL frontier")
     parser.add_argument("--seeds", default=str(DEFAULT_SEEDS))
     parser.add_argument("--pages", type=int, default=25)
-    parser.add_argument("--per-domain", type=int, default=10)
+    parser.add_argument("--max-depth", type=int, default=2)
     args = parser.parse_args()
 
     conn = database()
@@ -96,18 +92,18 @@ def main() -> None:
             batch = queued(conn, min(10, args.pages - processed))
             if not batch:
                 break
+
             for url, depth in batch:
                 mark(conn, url, "processing")
                 try:
-                    # index() performs the Common Crawl lookup/fetch and returns
-                    # links found in the fetched HTML when discovery is enabled.
-                    links = index(domain_pattern(url), max(1, args.per_domain), discover=True)
-                    # Keep the frontier bounded to the same host. This prevents
-                    # one popular page from turning a scheduled refresh into an
-                    # uncontrolled crawl while still giving us real link-following.
-                    host = urlparse(url).netloc.lower()
-                    same_host = [u for u in links if urlparse(u).netloc.lower() == host]
-                    add_urls(conn, same_host, depth + 1, url)
+                    if depth > args.max_depth:
+                        mark(conn, url, "done")
+                        processed += 1
+                        continue
+
+                    discovered = index_urls([url], discover=True)
+                    if depth < args.max_depth:
+                        add_urls(conn, discovered, depth + 1, url)
                     mark(conn, url, "done")
                 except Exception as exc:
                     print(f"frontier skip {url}: {exc}")
