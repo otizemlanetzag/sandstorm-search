@@ -25,18 +25,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Refresh Sandstorm's search index from Common Crawl")
     parser.add_argument("--seeds", default=str(DEFAULT_SEEDS))
     parser.add_argument("--per-domain", type=int, default=10)
+    parser.add_argument("--discovery-rounds", type=int, default=2)
+    parser.add_argument("--discovery-limit", type=int, default=25)
     args = parser.parse_args()
 
     seeds = load_seeds(Path(args.seeds))
     if not seeds:
         raise SystemExit("No index seeds configured")
 
-    for domain in seeds:
+    domains = list(seeds)
+    for domain in domains:
         pattern = f"{domain}/*"
         print(f"\n=== indexing {pattern} ===")
-        index(pattern, max(1, args.per_domain))
+        index(pattern, max(1, args.per_domain), discover=True)
 
-    print(f"refresh complete: {len(seeds)} domains")
+    # Grow within the seeded domains by following links that Common Crawl
+    # has captures for. We deliberately keep the number of rounds bounded.
+    for round_no in range(1, max(0, args.discovery_rounds) + 1):
+        print(f"\n=== discovery round {round_no} ===")
+        new_links: set[str] = set()
+        for domain in domains:
+            links = index(f"{domain}/*", max(1, args.discovery_limit), discover=True)
+            new_links.update(links)
+        print(f"discovery round {round_no}: {len(new_links)} candidate links")
+        if not new_links:
+            break
+
+    print(f"refresh complete: {len(domains)} seeded domains")
 
 
 if __name__ == "__main__":
