@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -15,15 +15,13 @@ from warcio.archiveiterator import ArchiveIterator
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "search.db"
-# Keep this pinned to a known crawl instead of silently changing the dataset
-# while an index is being built. Update deliberately when a new crawl is chosen.
 CC_INDEX = "https://index.commoncrawl.org/CC-MAIN-2026-34-index"
-UA = "SandstormSearch/0.2 (+https://github.com/otizemlanetzag/sandstorm-search)"
+UA = "SandstormSearch/0.3 (+https://github.com/otizemlanetzag/sandstorm-search)"
 
 
 def database():
-    conn = sqlite3.connect(DB)
     DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB)
     conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(
         url UNINDEXED, title, description, content,
         domain UNINDEXED, crawled_at UNINDEXED,
@@ -40,7 +38,29 @@ def parse_html(raw: bytes):
     meta = soup.find("meta", attrs={"name": re.compile("^description$", re.I)})
     description = meta.get("content", "").strip() if meta else ""
     text = soup.get_text(" ", strip=True)
-    return title[:500], description[:1000], text[:500000]
+    return title[:500], description[:1000], text[:500000], soup
+
+
+def discover_links(soup: BeautifulSoup, base_url: str, max_links: int = 100):
+    found = []
+    seen = set()
+    for tag in soup.find_all("a", href=True):
+        raw = tag.get("href", "").strip()
+        if not raw or raw.startswith(("#", "mailto:", "javascript:", "tel:")):
+            continue
+        try:
+            parsed = urlparse(urljoin(base_url, raw))
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                continue
+            url = parsed._replace(fragment="").geturl()
+            if url not in seen:
+                seen.add(url)
+                found.append(url)
+                if len(found) >= max_links:
+                    break
+        except ValueError:
+            continue
+    return found
 
 
 def query_index(pattern: str, limit: int):
@@ -60,16 +80,18 @@ def query_index(pattern: str, limit: int):
 
 def fetch_warc(record):
     filename, offset, length = record["filename"], int(record["offset"]), int(record["length"])
-    url = "https://data.commoncrawl.org/" + filename
-    headers = {
-        "Range": f"bytes={offset}-{offset + length - 1}",
-        "Accept-Encoding": "identity",
-        "User-Agent": UA,
-    }
-    r = requests.get(url, headers=headers, timeout=90)
+    r = requests.get(
+        "https://data.commoncrawl.org/" + filename,
+        headers={
+            "Range": f"bytes={offset}-{offset + length - 1}",
+            "Accept-Encoding": "identity",
+            "User-Agent": UA,
+        },
+        timeout=90,
+    )
     r.raise_for_status()
     data = r.content
-    if record.get("length") and len(data) != length:
+    if len(data) != length:
         raise RuntimeError(f"unexpected WARC range size: {len(data)} != {length}")
     with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz:
         for warc in ArchiveIterator(gz):
@@ -78,37 +100,44 @@ def fetch_warc(record):
     return b""
 
 
-def index(pattern: str, limit: int):
+def index(pattern: str, limit: int, discover: bool = False):
     conn = database()
     count = 0
+    discovered = set()
     try:
         for rec in query_index(pattern, limit):
             try:
+                url = rec["url"]
+                if conn.execute("SELECT 1 FROM pages WHERE url=? LIMIT 1", (url,)).fetchone():
+                    continue
                 body = fetch_warc(rec)
                 if not body:
                     continue
-                title, description, text = parse_html(body)
-                url = rec["url"]
+                title, description, text, soup = parse_html(body)
                 domain = urlparse(url).netloc.lower()
                 conn.execute(
                     "INSERT INTO pages(url,title,description,content,domain,crawled_at) VALUES(?,?,?,?,?,?)",
                     (url, title, description, text, domain, rec.get("timestamp", "")),
                 )
                 count += 1
-                if count % 25 == 0:
+                if discover:
+                    discovered.update(discover_links(soup, url, 50))
+                if count % 10 == 0:
                     conn.commit()
-                    print(f"indexed {count}")
+                    print(f"indexed {count}; discovered {len(discovered)} links")
             except Exception as exc:
                 print(f"skip {rec.get('url')}: {exc}")
         conn.commit()
     finally:
         conn.close()
-    print(f"done: {count} pages")
+    print(f"done: {count} pages; discovered {len(discovered)} links")
+    return discovered
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build Sandstorm's SQLite FTS index from Common Crawl")
-    parser.add_argument("pattern", nargs="?", default="*.example.com/*", help="Common Crawl URL pattern")
-    parser.add_argument("--limit", type=int, default=100, help="maximum Common Crawl index records")
+    parser.add_argument("pattern", nargs="?", default="*.example.com/*")
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--discover-links", action="store_true")
     args = parser.parse_args()
-    index(args.pattern, args.limit)
+    index(args.pattern, args.limit, args.discover_links)
