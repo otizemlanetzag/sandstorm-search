@@ -1,6 +1,11 @@
 name: Refresh search index
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "data/search.db"
+      - "public/index.json"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
