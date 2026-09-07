@@ -28,8 +28,8 @@ jobs:
       - name: Install indexer dependencies
         run: pip install -r requirements.txt
 
-      - name: Refresh bounded Common Crawl index
-        run: python -m backend.refresh_index --per-domain 10
+      - name: Refresh bounded Common Crawl URL frontier
+        run: python -m backend.refresh_index --pages 100 --max-depth 2
 
       - name: Export search index
         run: python -m backend.export_index
