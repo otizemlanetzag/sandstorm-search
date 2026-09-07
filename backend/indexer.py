@@ -15,12 +15,15 @@ from warcio.archiveiterator import ArchiveIterator
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "search.db"
+# Keep this pinned to a known crawl instead of silently changing the dataset
+# while an index is being built. Update deliberately when a new crawl is chosen.
 CC_INDEX = "https://index.commoncrawl.org/CC-MAIN-2026-34-index"
-UA = "SandstormSearch/0.1 (+https://github.com/otizemlanetzag/sandstorm-search)"
+UA = "SandstormSearch/0.2 (+https://github.com/otizemlanetzag/sandstorm-search)"
 
 
 def database():
     conn = sqlite3.connect(DB)
+    DB.parent.mkdir(parents=True, exist_ok=True)
     conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(
         url UNINDEXED, title, description, content,
         domain UNINDEXED, crawled_at UNINDEXED,
@@ -41,7 +44,13 @@ def parse_html(raw: bytes):
 
 
 def query_index(pattern: str, limit: int):
-    params = {"url": pattern, "output": "json", "filter": "status:200", "collapse": "urlkey", "pageSize": str(limit)}
+    params = {
+        "url": pattern,
+        "output": "json",
+        "filter": ["status:200", "mime:text/html"],
+        "collapse": "urlkey",
+        "pageSize": str(min(max(limit, 1), 100)),
+    }
     r = requests.get(CC_INDEX, params=params, headers={"User-Agent": UA}, timeout=60)
     r.raise_for_status()
     for line in r.text.splitlines():
@@ -52,7 +61,11 @@ def query_index(pattern: str, limit: int):
 def fetch_warc(record):
     filename, offset, length = record["filename"], int(record["offset"]), int(record["length"])
     url = "https://data.commoncrawl.org/" + filename
-    headers = {"Range": f"bytes={offset}-{offset + length - 1}", "Accept-Encoding": "identity", "User-Agent": UA}
+    headers = {
+        "Range": f"bytes={offset}-{offset + length - 1}",
+        "Accept-Encoding": "identity",
+        "User-Agent": UA,
+    }
     r = requests.get(url, headers=headers, timeout=90)
     r.raise_for_status()
     data = r.content
@@ -77,8 +90,10 @@ def index(pattern: str, limit: int):
                 title, description, text = parse_html(body)
                 url = rec["url"]
                 domain = urlparse(url).netloc.lower()
-                conn.execute("INSERT INTO pages(url,title,description,content,domain,crawled_at) VALUES(?,?,?,?,?,?)",
-                             (url, title, description, text, domain, rec.get("timestamp", "")))
+                conn.execute(
+                    "INSERT INTO pages(url,title,description,content,domain,crawled_at) VALUES(?,?,?,?,?,?)",
+                    (url, title, description, text, domain, rec.get("timestamp", "")),
+                )
                 count += 1
                 if count % 25 == 0:
                     conn.commit()
