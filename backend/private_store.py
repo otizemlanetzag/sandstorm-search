@@ -39,13 +39,13 @@ def db() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS blobs ("
-        "id TEXT PRIMARY KEY, capability_hash TEXT NOT NULL, blob TEXT NOT NULL, "
-        "created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+        "id TEXT NOT NULL, capability_hash TEXT NOT NULL, blob TEXT NOT NULL, "
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(id, capability_hash))"
     )
-    # Existing development databases from the pre-capability implementation
-    # may lack the namespace column. Do not silently expose those rows.
     columns = {row[1] for row in conn.execute("PRAGMA table_info(blobs)")}
     if "capability_hash" not in columns:
+        # Legacy rows remain inaccessible until explicitly migrated because
+        # they have no verifiable owner namespace.
         conn.execute("ALTER TABLE blobs ADD COLUMN capability_hash TEXT")
         conn.commit()
     return conn
@@ -71,11 +71,12 @@ def put_blob(payload: EncryptedBlob, x_private_capability: str | None = Header(d
     if not BLOB_RE.fullmatch(payload.blob):
         raise HTTPException(status_code=400, detail="Invalid ciphertext")
     ident = blob_id(payload.blob)
+    owner = capability_hash(capability)
     conn = db()
     try:
         conn.execute(
             "INSERT OR IGNORE INTO blobs(id, capability_hash, blob) VALUES(?, ?, ?)",
-            (ident, capability_hash(capability), payload.blob),
+            (ident, owner, payload.blob),
         )
         conn.commit()
     finally:
@@ -89,12 +90,13 @@ def list_blobs(
     x_private_capability: str | None = Header(default=None),
 ):
     capability = validate_capability(x_private_capability)
+    owner = capability_hash(capability)
     conn = db()
     try:
         rows = conn.execute(
             "SELECT id, blob FROM blobs WHERE capability_hash=? "
             "ORDER BY created_at DESC, id DESC LIMIT ?",
-            (capability_hash(capability), limit),
+            (owner, limit),
         ).fetchall()
     finally:
         conn.close()
@@ -106,11 +108,12 @@ def get_blob(ident: str, x_private_capability: str | None = Header(default=None)
     capability = validate_capability(x_private_capability)
     if not ID_RE.fullmatch(ident):
         raise HTTPException(status_code=400, detail="Invalid blob id")
+    owner = capability_hash(capability)
     conn = db()
     try:
         row = conn.execute(
             "SELECT blob FROM blobs WHERE id=? AND capability_hash=?",
-            (ident, capability_hash(capability)),
+            (ident, owner),
         ).fetchone()
     finally:
         conn.close()
