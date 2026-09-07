@@ -20,7 +20,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Refresh bounded Common Crawl URL frontier
-        run: python -m backend.refresh_index --pages 100 --max-depth 2
+        run: python -m backend.refresh_index --pages 10 --max-depth 1 --seed-pages 2
 
       - name: Export search index
         run: python -m backend.export_index
