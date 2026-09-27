@@ -1,8 +1,8 @@
-"""Sandstorm data loader.
+"""Local Sandstorm data loader.
 
-Downloads DATA.CSV from the snake-crawl repository when requested.
-The CSV is kept in memory by default; use download_data(save_to=...) to
-also save a local copy.
+Downloads DATA.CSV from snake-crawl into Sandstorm's local data directory,
+then reads and searches the local copy. The remote file is refreshed each
+time load_data() is called successfully.
 """
 
 from __future__ import annotations
@@ -14,28 +14,49 @@ from pathlib import Path
 from typing import Any
 
 DATA_URL = "https://raw.githubusercontent.com/otizemlanetzag/snake-crawl/main/DATA.CSV"
-
 USER_AGENT = "Sandstorm Search/1.0"
 
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+LOCAL_DATA_FILE = DATA_DIR / "DATA.CSV"
 
-def download_data(save_to: str | Path | None = None) -> list[dict[str, Any]]:
-    """Download DATA.CSV and return it as a list of dictionaries."""
+
+def download_data() -> list[dict[str, Any]]:
+    """Download DATA.CSV, save it locally, then read the local copy."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
     request = urllib.request.Request(
         DATA_URL,
         headers={"User-Agent": USER_AGENT},
     )
 
     with urllib.request.urlopen(request, timeout=60) as response:
-        data = response.read().decode("utf-8-sig")
+        remote_data = response.read()
 
-    rows = list(csv.DictReader(io.StringIO(data)))
+    # Keep a persistent local copy inside Sandstorm.
+    LOCAL_DATA_FILE.write_bytes(remote_data)
 
-    if save_to is not None:
-        Path(save_to).write_text(data, encoding="utf-8")
+    return read_local_data()
 
-    return rows
+
+def read_local_data() -> list[dict[str, Any]]:
+    """Read DATA.CSV only from Sandstorm's local copy."""
+    if not LOCAL_DATA_FILE.exists():
+        return download_data()
+
+    data = LOCAL_DATA_FILE.read_text(encoding="utf-8-sig")
+    return list(csv.DictReader(io.StringIO(data)))
+
+
+def load_data() -> list[dict[str, Any]]:
+    """Refresh the local DATA.CSV, then work from the local copy."""
+    try:
+        return download_data()
+    except (OSError, urllib.error.URLError):
+        # If the network is unavailable, continue using the last local copy.
+        return read_local_data()
 
 
 if __name__ == "__main__":
-    rows = download_data()
-    print(f"Loaded {len(rows)} rows from DATA.CSV")
+    rows = load_data()
+    print(f"Loaded {len(rows)} rows from {LOCAL_DATA_FILE}")
