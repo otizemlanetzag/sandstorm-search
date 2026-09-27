@@ -14,7 +14,7 @@ h1{color:#c08a3e;margin:0;font-size:2.2rem}.subtitle{font-size:.85rem;color:#8c7
 input:focus{border-color:#c08a3e}button{padding:14px 30px;font-size:1.05rem;background:#c08a3e;color:white;border:0;border-radius:10px;cursor:pointer;font-weight:bold}
 button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;padding:22px 0;position:relative}
 .result-title{font-size:1.15rem;color:#8c5b1b;text-decoration:none;font-weight:bold}.result-url{font-size:.82rem;color:#a6732e;direction:ltr;text-align:left;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:5px 0}
-.result-meta{font-size:.85rem;color:#8c7355;margin:6px 0}.result-snippet{font-size:.95rem;color:#5c4a3c;line-height:1.6}
+.result-meta{font-size:.85rem;color:#8c7355;margin:6px 0}.country-flag{font-size:1.25rem;margin-right:8px;vertical-align:middle}.country-flag[title]{cursor:help}.result-snippet{font-size:.95rem;color:#5c4a3c;line-height:1.6}
 .warning{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-weight:900;margin-left:8px;vertical-align:middle}
 .warning.ads{background:#f2c94c;color:#5c4810}.warning.data_selling{background:#d83b32;color:white}.warning.black{background:#111;color:white}.warning.harmful{background:#c40000;color:white;width:32px;height:32px;font-size:1.25rem}
 .harmful-link{color:#a00000}
@@ -81,9 +81,9 @@ function triggerSearch(){
   container.innerHTML='';
   data.results.forEach(function(item){
    var div=document.createElement('div');div.className='result-item';
-   var title=escapeHtml(item.title||item.url),url=escapeHtml(item.url||''),warn=warningMarkup(item.warning);
+   var title=escapeHtml(item.title||item.url),url=escapeHtml(item.url||''),warn=warningMarkup(item.warning),country=item.country||{flag:'🌐',code:''};
    var link=item.warning==='harmful'?'#':url;
-   div.innerHTML='<span>'+warn+'</span><a class="result-title '+(item.warning==='harmful'?'harmful-link':'')+'" href="'+link+'" '+(item.warning==='harmful'?'onclick="openWarning(\''+url.replace(/'/g,"\\'")+'\');return false;"':'target="_blank" rel="noopener noreferrer"')+'>'+title+'</a>'+
+   div.innerHTML='<span class="country-flag" title="'+escapeHtml(country.code||'לא ידוע')+'">'+(country.flag||'🌐')+'</span><span>'+warn+'</span><a class="result-title '+(item.warning==='harmful'?'harmful-link':'')+'" href="'+link+'" '+(item.warning==='harmful'?'onclick="openWarning(\''+url.replace(/'/g,"\\'")+'\');return false;"':'target="_blank" rel="noopener noreferrer"')+'>'+title+'</a>'+
    '<span class="result-url">'+url+'</span><div class="result-meta">📊 התאמות: <strong>'+item.score+'</strong></div>'+
    '<div class="result-snippet">'+escapeHtml(item.snippet||'')+'</div>';
    container.appendChild(div);
