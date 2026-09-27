@@ -9,9 +9,10 @@ import urllib.request
 from html.parser import HTMLParser
 
 try:
-    import deepl
+    import argostranslate.package
+    import argostranslate.translate
 except ImportError:
-    deepl = None
+    argostranslate = None
 from http.server import BaseHTTPRequestHandler
 
 from ask import load_data
@@ -138,31 +139,34 @@ def search_rows(rows,query,location="",limit=20):
 
 
 def _translation_language(text):
-    return "EN-US" if re.search(r"[\\u0590-\\u05FF]", text) else "HE"
+    return "en" if re.search(r"[\\u0590-\\u05FF]", text) else "he"
 
 def dictionary_lookup(query):
-    """Translate a short search query with the embedded DeepL Python SDK."""
+    """Translate short queries locally with Argos Translate models."""
     query = query.strip()
     if not query or len(query) > 500:
         return {"found": False, "word": query, "entries": []}
-    if deepl is None:
-        return {"found": False, "word": query, "entries": [], "error": "DeepL SDK is not installed."}
-    import os
-    auth_key = os.environ.get("DEEPL_AUTH_KEY", "").strip()
-    if not auth_key:
-        return {"found": False, "word": query, "entries": [], "configured": False}
-    client = deepl.DeepLClient(auth_key, send_platform_info=False)
-    target = _translation_language(query)
-    result = client.translate_text(query, target_lang=target)
-    translated = result.text if hasattr(result, "text") else str(result)
-    detected = getattr(result, "detected_source_lang", "") or ""
+    if argostranslate is None:
+        return {"found": False, "word": query, "entries": [], "error": "Argos Translate is not installed."}
+    source = _translation_language(query)
+    target = "en" if source == "he" else "he"
+    try:
+        translated = argostranslate.translate.translate(query, source, target)
+    except Exception as exc:
+        return {
+            "found": False,
+            "word": query,
+            "entries": [],
+            "error": "No local Argos translation model is installed.",
+            "details": str(exc)
+        }
     return {
         "found": bool(translated),
         "word": query,
-        "source_language": detected,
+        "source_language": source,
         "target_language": target,
         "entries": [{"translation": translated}],
-        "provider": "DeepL Python SDK"
+        "provider": "Argos Translate (local)"
     }
 
 
