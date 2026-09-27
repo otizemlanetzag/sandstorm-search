@@ -6,17 +6,27 @@ import hmac
 import json
 import os
 import secrets
-import time
+from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
 
 import psycopg
 from psycopg.rows import dict_row
 
 ACCOUNT_ID_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 SESSION_TTL = 60 * 60 * 24 * 30
-MAX_BODY = 12000
+MAX_JSON_BODY = 12000
+MAX_UPLOAD = 5 * 1024 * 1024
 PBKDF2_ITERATIONS = 600000
+RELEASE_CODE_TTL = 60 * 60 * 24 * 365
+PAIRING_TTL = 10 * 60
+ALLOWED_SETTINGS = {
+    "location", "saveLocation", "autoMap", "safeSearch", "resultsPerPage",
+    "openNewTab", "saveSearches", "targetLanguage", "autoTranslate",
+    "showWarnings", "warnBeforeHarmful", "calmMode", "fontSize",
+    "language", "saveHistory", "syncSettings",
+}
 
 def db():
     url = os.environ.get("DATABASE_URL")
@@ -34,6 +44,7 @@ def init_db():
                     verifier_salt BYTEA NOT NULL,
                     verifier BYTEA NOT NULL,
                     settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    birth_date DATE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
@@ -45,8 +56,45 @@ def init_db():
                     expires_at TIMESTAMPTZ NOT NULL
                 )
             """)
-            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_account_idx ON sandstorm_sessions(account_id)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_supervision (
+                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    supervisor_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    child_approved_at TIMESTAMPTZ,
+                    active BOOLEAN NOT NULL DEFAULT TRUE
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_pairings (
+                    token_hash BYTEA PRIMARY KEY,
+                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used BOOLEAN NOT NULL DEFAULT FALSE
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_release_codes (
+                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    code_hash BYTEA NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_proof_submissions (
+                    id BIGSERIAL PRIMARY KEY,
+                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    proof_type TEXT NOT NULL CHECK (proof_type IN ('donation','volunteering')),
+                    file_name TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    file_data BYTEA NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("ALTER TABLE sandstorm_accounts ADD COLUMN IF NOT EXISTS birth_date DATE")
             cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_expiry_idx ON sandstorm_sessions(expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_proof_account_idx ON sandstorm_proof_submissions(supervised_id)")
         conn.commit()
 
 def b64(data: bytes) -> str:
@@ -58,25 +106,14 @@ def unb64(value: str) -> bytes:
 def valid_account_id(value: str) -> bool:
     return bool(ACCOUNT_ID_RE.fullmatch(value or ""))
 
-def valid_proof(value: str) -> bool:
-    try:
-        raw = unb64(value)
-        return len(raw) == 32
-    except Exception:
-        return False
-
-def client_proof(secret: str, salt: bytes) -> bytes:
-    return hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, PBKDF2_ITERATIONS, dklen=32)
-
 def verifier_for(proof: bytes, salt: bytes) -> bytes:
     return hashlib.scrypt(proof, salt=salt, n=2**14, r=8, p=1, dklen=32, maxmem=64 * 1024 * 1024)
 
 def json_body(handler):
     length = int(handler.headers.get("Content-Length", "0") or 0)
-    if length <= 0 or length > MAX_BODY:
+    if length <= 0 or length > MAX_JSON_BODY:
         raise ValueError("Invalid request size")
-    raw = handler.rfile.read(length)
-    return json.loads(raw.decode("utf-8"))
+    return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 def cookie_token(handler):
     cookie = SimpleCookie()
@@ -85,17 +122,15 @@ def cookie_token(handler):
     return morsel.value if morsel else ""
 
 def token_hash(token: str) -> bytes:
-    return hashlib.sha256(token.encode("utf-8")).digest()
+    return hashlib.sha256(token.encode()).digest()
 
 def make_session(account_id: str) -> str:
     token = secrets.token_urlsafe(48)
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM sandstorm_sessions WHERE expires_at < NOW()")
-            cur.execute(
-                "INSERT INTO sandstorm_sessions(token_hash, account_id, expires_at) VALUES (%s,%s,NOW() + INTERVAL '30 days')",
-                (token_hash(token), account_id),
-            )
+            cur.execute("INSERT INTO sandstorm_sessions(token_hash,account_id,expires_at) VALUES (%s,%s,NOW()+INTERVAL '30 days')",
+                        (token_hash(token), account_id))
         conn.commit()
     return token
 
@@ -106,136 +141,332 @@ def current_account(handler):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT a.account_id, a.settings
-                FROM sandstorm_sessions s
-                JOIN sandstorm_accounts a ON a.account_id=s.account_id
-                WHERE s.token_hash=%s AND s.expires_at>NOW()
+                SELECT a.account_id,a.settings,a.birth_date,
+                       s.supervised_id,s.supervisor_id,s.child_approved_at
+                FROM sandstorm_sessions ss
+                JOIN sandstorm_accounts a ON a.account_id=ss.account_id
+                LEFT JOIN sandstorm_supervision s
+                  ON (s.supervised_id=a.account_id OR s.supervisor_id=a.account_id) AND s.active=TRUE
+                WHERE ss.token_hash=%s AND ss.expires_at>NOW()
+                LIMIT 1
             """, (token_hash(token),))
             return cur.fetchone()
 
 def response(handler, payload, status=200, cookie=None):
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body=json.dumps(payload,ensure_ascii=False,default=str).encode()
     handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("X-Content-Type-Options", "nosniff")
-    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Content-Type","application/json; charset=utf-8")
+    handler.send_header("Cache-Control","no-store")
+    handler.send_header("X-Content-Type-Options","nosniff")
+    handler.send_header("Content-Length",str(len(body)))
     if cookie is not None:
-        handler.send_header("Set-Cookie", cookie)
+        handler.send_header("Set-Cookie",cookie)
     handler.end_headers()
     handler.wfile.write(body)
 
-def handler_main(handler: BaseHTTPRequestHandler):
+def supervision_for(account_id):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM sandstorm_supervision WHERE supervised_id=%s AND active=TRUE", (account_id,))
+            return cur.fetchone()
+
+def make_pairing(supervised_id):
+    raw=secrets.token_urlsafe(32)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM sandstorm_pairings WHERE expires_at<NOW() OR used=TRUE")
+            cur.execute("INSERT INTO sandstorm_pairings(token_hash,supervised_id,expires_at) VALUES(%s,%s,NOW()+INTERVAL '10 minutes')",
+                        (token_hash(raw),supervised_id))
+        conn.commit()
+    return raw
+
+def new_release_code(supervised_id):
+    code=f"{secrets.randbelow(10000):04d}"
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO sandstorm_release_codes(supervised_id,code_hash)
+                VALUES(%s,%s)
+                ON CONFLICT(supervised_id) DO UPDATE SET code_hash=EXCLUDED.code_hash,created_at=NOW()
+            """,(supervised_id,hashlib.sha256(code.encode()).digest()))
+        conn.commit()
+    return code
+
+def code_ok(supervised_id,code):
+    if not __import__("re").fullmatch(r"d{4}",code or ""):
+        return False
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT code_hash FROM sandstorm_release_codes WHERE supervised_id=%s",(supervised_id,))
+            row=cur.fetchone()
+    return bool(row and hmac.compare_digest(bytes(row["code_hash"]),hashlib.sha256(code.encode()).digest()))
+
+def adult(birth_date):
+    if not birth_date: return False
+    today=date.today()
+    return (today.year-birth_date.year) - ((today.month,today.day)<(birth_date.month,birth_date.day)) >= 18
+
+def unlink_if_adult(account_id):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT birth_date FROM sandstorm_accounts WHERE account_id=%s",(account_id,))
+            row=cur.fetchone()
+            if row and adult(row["birth_date"]):
+                cur.execute("UPDATE sandstorm_supervision SET active=FALSE WHERE supervised_id=%s",(account_id,))
+                conn.commit()
+                return True
+    return False
+
+def settings_for(raw):
+    if not isinstance(raw,dict): return {}
+    return {k:v for k,v in raw.items() if k in ALLOWED_SETTINGS}
+
+def multipart_upload(handler):
+    length=int(handler.headers.get("Content-Length","0") or 0)
+    if length<=0 or length>MAX_UPLOAD:
+        raise ValueError("Invalid upload size")
+    ctype=handler.headers.get("Content-Type","")
+    if not ctype.startswith("multipart/form-data;"):
+        raise ValueError("Multipart upload required")
+    boundary=ctype.split("boundary=",1)[-1].strip().strip('"')
+    raw=handler.rfile.read(length)
+    marker=("--"+boundary).encode()
+    parts=raw.split(marker)
+    fields={}
+    file_part=None
+    for part in parts:
+        if not part or part in (b"--\r\n",b"--"):
+            continue
+        part=part.lstrip(b"\r\n").rstrip(b"\r\n")
+        head,sep,body=part.partition(b"\r\n\r\n")
+        if not sep: continue
+        headers=head.decode("utf-8","replace").split("\r\n")
+        disp=next((h for h in headers if h.lower().startswith("content-disposition:")), "")
+        name=""
+        filename=""
+        for piece in disp.split(";"):
+            piece=piece.strip()
+            if piece.startswith("name="): name=piece[5:].strip('"')
+            elif piece.startswith("filename="): filename=piece[9:].strip('"')
+        ctype2=next((h.split(":",1)[1].strip() for h in headers if h.lower().startswith("content-type:")), "application/octet-stream")
+        if filename:
+            file_part=(name,filename,ctype2,body)
+        else:
+            fields[name]=body.decode("utf-8","replace")
+    if not file_part: raise ValueError("No proof file")
+    return fields,file_part
+
+def handler_main(handler):
     try:
         init_db()
-        action = handler.path.split("?", 1)[0].rstrip("/").split("/")[-1]
-        data = json_body(handler) if handler.command in ("POST", "PUT") else {}
+        path=urlparse(handler.path).path
+        action=path.rstrip("/").split("/")[-1]
+        data=json_body(handler) if handler.command in ("POST","PUT") and "proof-upload" not in path else {}
 
-        if action == "challenge" and handler.command == "POST":
-            account_id = data.get("account_id", "")
-            if not valid_account_id(account_id):
-                return response(handler, {"error": "Invalid account identifier."}, 400)
+        if action=="challenge" and handler.command=="POST":
+            aid=data.get("account_id","")
+            if not valid_account_id(aid): return response(handler,{"error":"Invalid account identifier."},400)
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT client_salt FROM sandstorm_accounts WHERE account_id=%s", (account_id,))
-                    row = cur.fetchone()
-            if row:
-                return response(handler, {"exists": True, "client_salt": b64(bytes(row["client_salt"]))})
-            return response(handler, {"exists": False, "client_salt": b64(secrets.token_bytes(32))})
+                    cur.execute("SELECT client_salt FROM sandstorm_accounts WHERE account_id=%s",(aid,))
+                    row=cur.fetchone()
+            return response(handler,{"exists":bool(row),"client_salt":b64(bytes(row["client_salt"])) if row else b64(secrets.token_bytes(32))})
 
-        if action == "register" and handler.command == "POST":
-            account_id = data.get("account_id", "")
-            client_salt = unb64(data.get("client_salt", ""))
-            proof = unb64(data.get("proof", ""))
-            if not valid_account_id(account_id) or len(client_salt) != 32 or len(proof) != 32:
-                return response(handler, {"error": "Invalid account data."}, 400)
-            verifier_salt = secrets.token_bytes(32)
-            verifier = verifier_for(proof, verifier_salt)
-            settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
+        if action=="register" and handler.command=="POST":
+            aid=data.get("account_id",""); cs=unb64(data.get("client_salt","")); proof=unb64(data.get("proof",""))
+            if not valid_account_id(aid) or len(cs)!=32 or len(proof)!=32:return response(handler,{"error":"Invalid account data."},400)
+            birth=None
+            if data.get("birth_date"):
+                birth=date.fromisoformat(data["birth_date"])
+            settings=settings_for(data.get("settings",{}))
+            vs=secrets.token_bytes(32); verifier=verifier_for(proof,vs)
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT 1 FROM sandstorm_accounts WHERE account_id=%s", (account_id,))
-                    if cur.fetchone():
-                        return response(handler, {"error": "Account already exists."}, 409)
-                    cur.execute("""
-                        INSERT INTO sandstorm_accounts(account_id,client_salt,verifier_salt,verifier,settings)
-                        VALUES (%s,%s,%s,%s,%s)
-                    """, (account_id, client_salt, verifier_salt, verifier, json.dumps(settings)))
+                    cur.execute("SELECT 1 FROM sandstorm_accounts WHERE account_id=%s",(aid,))
+                    if cur.fetchone(): return response(handler,{"error":"Account already exists."},409)
+                    cur.execute("INSERT INTO sandstorm_accounts(account_id,client_salt,verifier_salt,verifier,settings,birth_date) VALUES(%s,%s,%s,%s,%s,%s)",
+                                (aid,cs,vs,verifier,json.dumps(settings),birth))
                 conn.commit()
-            token = make_session(account_id)
-            return response(handler, {"ok": True, "settings": settings}, 201,
+            token=make_session(aid)
+            return response(handler,{"ok":True,"settings":settings},201,
                             f"sandstorm_session={token}; Max-Age={SESSION_TTL}; Path=/; HttpOnly; Secure; SameSite=Lax")
 
-        if action == "login" and handler.command == "POST":
-            account_id = data.get("account_id", "")
-            proof = unb64(data.get("proof", ""))
-            if not valid_account_id(account_id) or len(proof) != 32:
-                return response(handler, {"error": "Invalid account data."}, 400)
+        if action=="login" and handler.command=="POST":
+            aid=data.get("account_id",""); proof=unb64(data.get("proof",""))
+            if not valid_account_id(aid) or len(proof)!=32:return response(handler,{"error":"Invalid account data."},400)
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT verifier_salt, verifier, settings FROM sandstorm_accounts WHERE account_id=%s", (account_id,))
-                    row = cur.fetchone()
-            if not row:
-                return response(handler, {"error": "המשפט הסודי אינו מזוהה."}, 401)
-            candidate = verifier_for(proof, bytes(row["verifier_salt"]))
-            if not hmac.compare_digest(candidate, bytes(row["verifier"])):
-                return response(handler, {"error": "המשפט הסודי אינו מזוהה."}, 401)
-            token = make_session(account_id)
-            return response(handler, {"ok": True, "settings": row["settings"] or {}}, 200,
+                    cur.execute("SELECT verifier_salt,verifier,settings FROM sandstorm_accounts WHERE account_id=%s",(aid,))
+                    row=cur.fetchone()
+            if not row:return response(handler,{"error":"המשפט הסודי אינו מזוהה."},401)
+            if not hmac.compare_digest(verifier_for(proof,bytes(row["verifier_salt"])),bytes(row["verifier"])):return response(handler,{"error":"המשפט הסודי אינו מזוהה."},401)
+            token=make_session(aid)
+            return response(handler,{"ok":True,"settings":row["settings"] or {}},200,
                             f"sandstorm_session={token}; Max-Age={SESSION_TTL}; Path=/; HttpOnly; Secure; SameSite=Lax")
 
-        if action == "me" and handler.command == "GET":
-            account = current_account(handler)
-            if not account:
-                return response(handler, {"logged_in": False})
-            return response(handler, {"logged_in": True, "settings": account["settings"] or {}})
+        if action=="me" and handler.command=="GET":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"logged_in":False})
+            if unlink_if_adult(acc["account_id"]): acc= current_account(handler)
+            sup=supervision_for(acc["account_id"])
+            role=None
+            if sup: role="SUPERVISED" if sup["supervised_id"]==acc["account_id"] else "SUPERVISOR"
+            return response(handler,{"logged_in":True,"settings":acc["settings"] or {},"birth_date":acc["birth_date"],"supervision":{"role":role,"supervised_id":sup["supervised_id"] if sup else None,"supervisor_id":sup["supervisor_id"] if sup else None,"child_approved":bool(sup and sup["child_approved_at"])},"adult_release":bool(acc["birth_date"] and adult(acc["birth_date"]))})
 
-        if action == "settings" and handler.command == "PUT":
-            account = current_account(handler)
-            if not account:
-                return response(handler, {"error": "Not signed in."}, 401)
-            settings = data.get("settings")
-            if not isinstance(settings, dict):
-                return response(handler, {"error": "Invalid settings."}, 400)
-            settings = {k: v for k, v in settings.items() if k in ("location", "saveLocation", "autoMap")}
+        if action=="settings" and handler.command=="PUT":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            settings=settings_for(data.get("settings",{}))
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",
-                                (json.dumps(settings), account["account_id"]))
+                    cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",(json.dumps(settings),acc["account_id"]))
                 conn.commit()
-            return response(handler, {"ok": True, "settings": settings})
+            return response(handler,{"ok":True,"settings":settings})
 
-        if action == "logout" and handler.command == "POST":
-            token = cookie_token(handler)
+        if action=="pairing" and handler.command=="POST":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            if data.get("role")!="SUPERVISED": return response(handler,{"error":"Choose SUPERVISED on the child's account."},400)
+            birth=data.get("birth_date")
+            if birth:
+                try: bd=date.fromisoformat(birth)
+                except ValueError:return response(handler,{"error":"Invalid birth date."},400)
+                with db() as conn:
+                    with conn.cursor() as cur: cur.execute("UPDATE sandstorm_accounts SET birth_date=%s WHERE account_id=%s",(bd,acc["account_id"]))
+                    conn.commit()
+            token=make_pairing(acc["account_id"])
+            return response(handler,{"ok":True,"pairing_token":token,"expires_seconds":PAIRING_TTL})
+
+        if action=="pair" and handler.command=="POST":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            raw=data.get("pairing_token","")
+            if not raw:return response(handler,{"error":"Missing pairing token."},400)
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT supervised_id FROM sandstorm_pairings WHERE token_hash=%s AND expires_at>NOW() AND used=FALSE",(token_hash(raw),))
+                    row=cur.fetchone()
+                    if not row:return response(handler,{"error":"QR code expired or already used."},400)
+                    cur.execute("UPDATE sandstorm_pairings SET used=TRUE WHERE token_hash=%s",(token_hash(raw),))
+                    cur.execute("UPDATE sandstorm_supervision SET active=FALSE WHERE supervisor_id=%s AND active=TRUE",(acc["account_id"],))
+                    cur.execute("INSERT INTO sandstorm_supervision(supervised_id,supervisor_id,child_approved_at) VALUES(%s,%s,NOW()) ON CONFLICT(supervised_id) DO UPDATE SET supervisor_id=EXCLUDED.supervisor_id,active=TRUE,child_approved_at=EXCLUDED.child_approved_at",
+                                (row["supervised_id"],acc["account_id"]))
+                conn.commit()
+            new_release_code(row["supervised_id"])
+            return response(handler,{"ok":True})
+
+        if action=="supervision" and handler.command=="GET":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            if unlink_if_adult(acc["account_id"]): return response(handler,{"active":False,"adult_release":True})
+            sup=supervision_for(acc["account_id"])
+            if not sup:return response(handler,{"active":False})
+            role="SUPERVISED" if sup["supervised_id"]==acc["account_id"] else "SUPERVISOR"
+            return response(handler,{"active":True,"role":role,"supervised_id":sup["supervised_id"],"supervisor_id":sup["supervisor_id"],"child_approved":bool(sup["child_approved_at"])})
+
+        if action=="approve" and handler.command=="POST":
+            acc=current_account(handler)
+            sup=supervision_for(acc["account_id"]) if acc else None
+            if not acc or not sup or sup["supervised_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervised account can approve."},403)
+            with db() as conn:
+                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_supervision SET child_approved_at=NOW() WHERE supervised_id=%s",(acc["account_id"],))
+                conn.commit()
+            return response(handler,{"ok":True})
+
+        if action=="release-code" and handler.command=="POST":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            sup=supervision_for(acc["account_id"])
+            if not sup or sup["supervisor_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervisor can request the code."},403)
+            code=new_release_code(sup["supervised_id"])
+            return response(handler,{"ok":True,"delay_seconds":10,"code":code})
+
+        if action=="unlock" and handler.command=="POST":
+            acc=current_account(handler); sup=supervision_for(acc["account_id"]) if acc else None
+            if not acc or not sup or sup["supervised_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervised account can unlock."},403)
+            if not code_ok(acc["account_id"],data.get("code","")):return response(handler,{"error":"קוד שחרור שגוי."},403)
+            settings=acc["settings"] or {}; settings["safeSearch"]=False
+            with db() as conn:
+                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",(json.dumps(settings),acc["account_id"]))
+                conn.commit()
+            return response(handler,{"ok":True,"settings":settings})
+
+        if action=="safe-search" and handler.command=="POST":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            enabled=bool(data.get("enabled",True)); sup=supervision_for(acc["account_id"])
+            if sup and sup["supervised_id"]==acc["account_id"] and not enabled:
+                return response(handler,{"error":"SAFESEARCH נעול. נדרש קוד שחרור של המפקח."},403)
+            settings=acc["settings"] or {}; settings["safeSearch"]=enabled
+            if enabled:new_release_code(acc["account_id"]) if sup else None
+            with db() as conn:
+                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",(json.dumps(settings),acc["account_id"]))
+                conn.commit()
+            return response(handler,{"ok":True,"safeSearch":enabled})
+
+        if action=="stop" and handler.command=="POST":
+            acc=current_account(handler); sup=supervision_for(acc["account_id"]) if acc else None
+            if not acc or not sup or sup["supervisor_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervisor can stop supervision."},403)
+            if not code_ok(sup["supervised_id"],data.get("code","")):return response(handler,{"error":"קוד שחרור שגוי."},403)
+            with db() as conn:
+                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_supervision SET active=FALSE WHERE supervised_id=%s",(sup["supervised_id"],))
+                conn.commit()
+            return response(handler,{"ok":True})
+
+        if action=="proof-upload" and handler.command=="POST":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            sup=supervision_for(acc["account_id"])
+            if not sup:return response(handler,{"error":"No supervision record."},403)
+            fields,filep=multipart_upload(handler)
+            ptype=fields.get("proof_type","")
+            if ptype not in ("donation","volunteering"):return response(handler,{"error":"Invalid proof type."},400)
+            _,filename,ctype,filedata=filep
+            if len(filedata)>MAX_UPLOAD:return response(handler,{"error":"File too large."},413)
+            if not filename or len(filename)>180:return response(handler,{"error":"Invalid filename."},400)
+            with db() as conn:
+                with conn.cursor() as cur:cur.execute("INSERT INTO sandstorm_proof_submissions(supervised_id,proof_type,file_name,content_type,file_data) VALUES(%s,%s,%s,%s,%s)",
+                                                      (sup["supervised_id"],ptype,filename,ctype,filedata))
+                conn.commit()
+            return response(handler,{"ok":True,"status":"pending"})
+
+        if action=="proofs" and handler.command=="GET":
+            acc=current_account(handler)
+            if not acc:return response(handler,{"error":"Not signed in."},401)
+            sup=supervision_for(acc["account_id"])
+            target=sup["supervised_id"] if sup else acc["account_id"]
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id,proof_type,file_name,content_type,status,created_at FROM sandstorm_proof_submissions WHERE supervised_id=%s ORDER BY id DESC",(target,))
+                    rows=cur.fetchall()
+            return response(handler,{"proofs":rows})
+
+        if action=="logout" and handler.command=="POST":
+            token=cookie_token(handler)
             if token:
                 with db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("DELETE FROM sandstorm_sessions WHERE token_hash=%s", (token_hash(token),))
+                    with conn.cursor() as cur:cur.execute("DELETE FROM sandstorm_sessions WHERE token_hash=%s",(token_hash(token),))
                     conn.commit()
-            return response(handler, {"ok": True}, 200,
-                            "sandstorm_session=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax")
+            return response(handler,{"ok":True},200,"sandstorm_session=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax")
 
-        return response(handler, {"error": "Not found"}, 404)
-    except (json.JSONDecodeError, ValueError, UnicodeError):
-        return response(handler, {"error": "Invalid request."}, 400)
+        return response(handler,{"error":"Not found"},404)
+    except (json.JSONDecodeError,ValueError,UnicodeError):
+        return response(handler,{"error":"Invalid request."},400)
     except Exception:
-        return response(handler, {"error": "Account service is not configured or temporarily unavailable."}, 503)
+        return response(handler,{"error":"Account service is not configured or temporarily unavailable."},503)
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/api/account/me"):
+        if self.path.startswith("/api/account/"):
             handler_main(self)
-        else:
-            response(self, {"error": "Not found"}, 404)
+        else: response(self,{"error":"Not found"},404)
     def do_POST(self):
-        if self.path.startswith(("/api/account/challenge","/api/account/register","/api/account/login","/api/account/logout")):
+        if self.path.startswith("/api/account/"):
             handler_main(self)
-        else:
-            response(self, {"error": "Not found"}, 404)
+        else: response(self,{"error":"Not found"},404)
     def do_PUT(self):
-        if self.path.startswith("/api/account/settings"):
+        if self.path.startswith("/api/account/"):
             handler_main(self)
-        else:
-            response(self, {"error": "Not found"}, 404)
-    def log_message(self, format, *args):
+        else: response(self,{"error":"Not found"},404)
+    def log_message(self,format,*args):
         return
