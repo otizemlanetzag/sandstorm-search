@@ -35,7 +35,7 @@ button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;pad
 </div>
 <div class="status" id="status-text">טוען את מאגר החיפוש המקומי...</div>
 <div class="search-box"><input type="text" id="search-input" placeholder="חפש ב־DATA.CSV..." autofocus><button onclick="triggerSearch()">חפש</button></div><div class="location-box"><input type="text" id="location-input" placeholder="מיקום (יישוב או מדינה) — אופציונלי"><button onclick="triggerSearch()">התאם</button></div><div class="location-note">המיקום הוא לבחירת המשתמש ומשמש רק להתאמת סדר התוצאות.</div>
-<div id="dictionary-box" class="dictionary-box" style="display:none"><div class="dictionary-title">📖 מילון</div><div class="dictionary-word" id="dictionary-word"></div><div id="dictionary-content"></div></div><div id="calculator-box" class="calculator-box" style="display:none"><div class="calculator-title">🧮 מחשבון</div><div class="calculator-expression" id="calculator-expression"></div><div class="calculator-result" id="calculator-result"></div></div><div id="map-panel" class="map-panel"><div class="map-title">📍 מיקומים שנמצאו ב־OpenStreetMap</div><iframe id="osm-map" title="OpenStreetMap map" loading="lazy"></iframe><div class="map-note">© OpenStreetMap contributors · ODbL</div></div><div id="results-container"></div>
+<div id="dictionary-box" class="dictionary-box" style="display:none"><div class="dictionary-title">🌐 תרגום</div><div class="dictionary-word" id="dictionary-word"></div><div id="dictionary-content"></div></div><div id="calculator-box" class="calculator-box" style="display:none"><div class="calculator-title">🧮 מחשבון</div><div class="calculator-expression" id="calculator-expression"></div><div class="calculator-result" id="calculator-result"></div></div><div id="map-panel" class="map-panel"><div class="map-title">📍 מיקומים שנמצאו ב־OpenStreetMap</div><iframe id="osm-map" title="OpenStreetMap map" loading="lazy"></iframe><div class="map-note">© OpenStreetMap contributors · ODbL</div></div><div id="results-container"></div>
 <div class="legend">⚠️ צהוב: פרסומות · ⚠️ אדום: מכירת נתונים · ⚠️ שחור: תוכן בוטה/אלים/גזעני · <b style="color:#a00000">❗</b> אדום גדול: אתר שסומן כמזיק</div>
 </div>
 
@@ -101,18 +101,14 @@ function triggerSearch(){
  var dictionaryBox=document.getElementById('dictionary-box');
  dictionaryBox.style.display='none';
  document.getElementById('dictionary-content').innerHTML='';
- if(query.split(/\\s+/).length<=4 && query.length<=80){
+ if(query.split(/\\s+/).length<=12 && query.length<=500){
   fetch('/api/dictionary?q='+encodeURIComponent(query)).then(function(r){return r.json()}).then(function(data){
    if(!data.found)return;
    document.getElementById('dictionary-word').textContent=data.word;
    var html='';
    data.entries.forEach(function(entry){
-    if(entry.pos)html+='<div class="dictionary-pos">'+escapeHtml(entry.pos)+'</div>';
-    (entry.senses||[]).forEach(function(sense){
-     (sense.glosses||[]).forEach(function(gloss){html+='<div class="dictionary-sense">'+escapeHtml(gloss)+'</div>'});
-     (sense.examples||[]).forEach(function(example){html+='<div class="dictionary-example">“'+escapeHtml(example)+'”</div>'});
-    });
-    (entry.translations||[]).forEach(function(t){html+='<div class="dictionary-translation">↔ '+escapeHtml(t.word)+'</div>'});
+    if(entry.translation)html+='<div class="dictionary-translation">↔ '+escapeHtml(entry.translation)+'</div>';
+    
    });
    if(html){document.getElementById('dictionary-content').innerHTML=html;dictionaryBox.style.display='block';}
   }).catch(function(){});
