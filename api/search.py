@@ -14,6 +14,8 @@ try:
 except ImportError:
     argostranslate = None
 from http.server import BaseHTTPRequestHandler
+import time
+from collections import defaultdict, deque
 
 from ask import load_data
 from sandbox import run_in_sandbox
@@ -26,6 +28,32 @@ EU_COUNTRIES = {
     "MT":"🇲🇹","NL":"🇳🇱","PL":"🇵🇱","PT":"🇵🇹","RO":"🇷🇴","SK":"🇸🇰",
     "SI":"🇸🇮","ES":"🇪🇸","SE":"🇸🇪"
 }
+MAX_QUERY_LENGTH = 500
+MAX_LOCATION_LENGTH = 120
+MAX_REQUEST_TARGET = 4096
+RATE_WINDOW_SECONDS = 60
+RATE_MAX_REQUESTS = 60
+_rate_log = defaultdict(deque)
+
+def _client_ip(handler):
+    return handler.client_address[0] if handler.client_address else "unknown"
+
+def _rate_limited(ip):
+    now = time.monotonic()
+    bucket = _rate_log[ip]
+    while bucket and now - bucket[0] > RATE_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= RATE_MAX_REQUESTS:
+        return True
+    bucket.append(now)
+    return False
+
+def _clean_query(value, maximum=MAX_QUERY_LENGTH):
+    value = (value or "").strip()
+    if len(value) > maximum:
+        raise ValueError("Input is too long.")
+    return value
+
 COUNTRY_FLAGS = {**EU_COUNTRIES, "IL":"🇮🇱","US":"🇺🇸","GB":"🇬🇧","CA":"🇨🇦","CH":"🇨🇭",
                  "NO":"🇳🇴","IS":"🇮🇸","AU":"🇦🇺","NZ":"🇳🇿","JP":"🇯🇵","CN":"🇨🇳",
                  "IN":"🇮🇳","BR":"🇧🇷","MX":"🇲🇽","RU":"🇷🇺","UA":"🇺🇦","TR":"🇹🇷"}
@@ -100,11 +128,18 @@ def country_from_content(content):
             return {"code":code,"flag":COUNTRY_FLAGS[code],"eu":code in EU_COUNTRIES}
     return {"code":"","flag":"🌐","eu":False}
 
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _safe_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+_SAFE_OPENER = urllib.request.build_opener(_SafeRedirectHandler)
+
 def scan_site(url):
     _safe_url(url)
     req=urllib.request.Request(url,headers={"User-Agent":"Sandstorm Security Scanner/1.0"})
-    with urllib.request.urlopen(req,timeout=10) as response:
-        final_url=response.geturl(); content_type=response.headers.get("Content-Type",""); body=response.read(2_000_000)
+    with _SAFE_OPENER.open(req,timeout=10) as response:
+        final_url=response.geturl(); _safe_url(final_url); content_type=response.headers.get("Content-Type",""); body=response.read(2_000_000)
     text=body.decode("utf-8",errors="replace"); parser=ScriptParser()
     if "html" in content_type.lower() or "<html" in text[:1000].lower(): parser.feed(text)
     sources=[text]
@@ -113,7 +148,7 @@ def scan_site(url):
         try:
             script_url=urllib.parse.urljoin(final_url,src); _safe_url(script_url)
             req=urllib.request.Request(script_url,headers={"User-Agent":"Sandstorm Security Scanner/1.0"})
-            with urllib.request.urlopen(req,timeout=5) as response: sources.append(response.read(1_000_000).decode("utf-8",errors="replace"))
+            with _SAFE_OPENER.open(req,timeout=5) as response: sources.append(response.read(1_000_000).decode("utf-8",errors="replace"))
         except Exception: continue
     level,flags=classify_text("\n".join(sources))
     return {"url":url,"final_url":final_url,"level":level,"flags":flags,"country":country_from_url(final_url,text),"scanned_bytes":sum(len(s.encode("utf-8",errors="ignore")) for s in sources),"scripts_scanned":len(sources)-1,"note":"Static inspection only; the site code was not executed."}
@@ -171,27 +206,80 @@ def dictionary_lookup(query):
 
 
 class handler(BaseHTTPRequestHandler):
-    def _send_json(self,payload,status=200):
-        body=json.dumps(payload,ensure_ascii=False).encode("utf-8"); self.send_response(status)
-        self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
+    server_version = "SandstormSearch"
+    sys_version = ""
+
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _guard(self):
+        if len(self.path) > MAX_REQUEST_TARGET:
+            self._send_json({"error": "Request is too large."}, 414)
+            return False
+        if _rate_limited(_client_ip(self)):
+            self._send_json({"error": "Too many requests. Please try again shortly."}, 429)
+            return False
+        return True
+
     def do_GET(self):
-        parsed=urllib.parse.urlparse(self.path)
-        if parsed.path=="/api/dictionary":
-            query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()
-            if not query:return self._send_json({"found":False,"word":"","entries":[]})
-            try:return self._send_json(dictionary_lookup(query))
-            except Exception as exc:return self._send_json({"found":False,"word":query,"entries":[],"error":str(exc)},502)
-        if parsed.path=="/api/search":
-            query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()\n            location=urllib.parse.parse_qs(parsed.query).get("location",[""])[0].strip()
-            if not query:return self._send_json({"results":[],"query":""})
+        if not self._guard():
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+
+        if parsed.path == "/api/dictionary":
             try:
-                rows=load_data(); return self._send_json({"results":search_rows(rows,query,location),"query":query,"total_indexed":len(rows)})
-            except Exception as exc:return self._send_json({"error":"Unable to load the Sandstorm data index.","details":str(exc),"results":[]},500)
-        if parsed.path=="/api/scan":
-            url=urllib.parse.parse_qs(parsed.query).get("url",[""])[0].strip()
-            try:return self._send_json(run_in_sandbox(scan_site,url))
-            except Exception as exc:return self._send_json({"error":"Site scan failed.","details":str(exc)},502)
-        if parsed.path=="/api/status":
-            try:return self._send_json({"total_crawled":len(load_data())})
-            except Exception as exc:return self._send_json({"total_crawled":0,"error":str(exc)},500)
-        self._send_json({"error":"Not found"},404)
+                query = _clean_query(params.get("q", [""])[0])
+            except ValueError:
+                return self._send_json({"error": "Query is too long."}, 400)
+            if not query:
+                return self._send_json({"found": False, "word": "", "entries": []})
+            try:
+                return self._send_json(dictionary_lookup(query))
+            except Exception:
+                return self._send_json({"found": False, "word": query, "entries": [], "error": "Translation failed."}, 502)
+
+        if parsed.path == "/api/search":
+            try:
+                query = _clean_query(params.get("q", [""])[0])
+                location = _clean_query(params.get("location", [""])[0], MAX_LOCATION_LENGTH)
+            except ValueError:
+                return self._send_json({"error": "Input is too long.", "results": []}, 400)
+            if not query:
+                return self._send_json({"results": [], "query": ""})
+            try:
+                rows = load_data()
+                return self._send_json({"results": search_rows(rows, query, location), "query": query, "total_indexed": len(rows)})
+            except Exception:
+                return self._send_json({"error": "Unable to load the Sandstorm data index.", "results": []}, 500)
+
+        if parsed.path == "/api/scan":
+            try:
+                url = _clean_query(params.get("url", [""])[0], 2048)
+                if not url:
+                    return self._send_json({"error": "URL is required."}, 400)
+                return self._send_json(run_in_sandbox(scan_site, url))
+            except Exception:
+                return self._send_json({"error": "Site scan failed."}, 502)
+
+        if parsed.path == "/api/status":
+            try:
+                return self._send_json({"total_crawled": len(load_data())})
+            except Exception:
+                return self._send_json({"total_crawled": 0, "error": "Status unavailable."}, 500)
+
+        return self._send_json({"error": "Not found"}, 404)
+
+    def log_message(self, format, *args):
+        return
