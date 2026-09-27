@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler
 
 from ask import load_data
+from sandbox import run_in_sandbox
 
 
 EU_COUNTRIES = {
@@ -137,7 +138,7 @@ class handler(BaseHTTPRequestHandler):
             except Exception as exc:return self._send_json({"error":"Unable to load the Sandstorm data index.","details":str(exc),"results":[]},500)
         if parsed.path=="/api/scan":
             url=urllib.parse.parse_qs(parsed.query).get("url",[""])[0].strip()
-            try:return self._send_json(scan_site(url))
+            try:return self._send_json(run_in_sandbox(scan_site,url))
             except Exception as exc:return self._send_json({"error":"Site scan failed.","details":str(exc)},502)
         if parsed.path=="/api/status":
             try:return self._send_json({"total_crawled":len(load_data())})
