@@ -54,12 +54,44 @@ def _safe_url(url):
             if not ipaddress.ip_address(info[4][0]).is_global: raise ValueError("Private or local network addresses cannot be scanned.")
     except socket.gaierror as exc: raise ValueError("The host could not be resolved.") from exc
 
-def country_from_url(url):
+def country_from_url(url, content=""):
     host=(urllib.parse.urlparse(url).hostname or "").lower()
     parts=host.split(".")
     tld=parts[-1].upper() if parts else ""
-    if tld in COUNTRY_FLAGS: return {"code":tld,"flag":COUNTRY_FLAGS[tld],"eu":tld in EU_COUNTRIES}
-    return {"code":"EU","flag":"🇪🇺","eu":True} if tld=="EU" else {"code":"","flag":"🌐","eu":False}
+
+    # .ai is primarily a technology/AI domain now, not a country indicator.
+    # Determine its likely location from the site's actual content instead.
+    if tld == "AI":
+        return country_from_content(content)
+
+    if tld in COUNTRY_FLAGS:
+        return {"code":tld,"flag":COUNTRY_FLAGS[tld],"eu":tld in EU_COUNTRIES}
+    if tld == "EU":
+        return {"code":"EU","flag":"🇪🇺","eu":True}
+    return country_from_content(content)
+
+
+def country_from_content(content):
+    text=content.casefold()
+    hints=[
+        ("IL", ["israel","ישראל","hebrew","עברית"]),
+        ("FR", ["france","français","français","france"]),
+        ("DE", ["germany","deutschland","german"]),
+        ("ES", ["spain","españa","spanish"]),
+        ("IT", ["italy","italia","italiano"]),
+        ("NL", ["netherlands","nederland","dutch"]),
+        ("US", ["united states","usa","american"]),
+        ("GB", ["united kingdom","england","british"]),
+        ("CA", ["canada","canadian"]),
+        ("JP", ["japan","日本","japanese"]),
+        ("CN", ["china","中国","chinese"]),
+        ("IN", ["india","भारत","indian"]),
+        ("BR", ["brazil","brasil","brazilian"]),
+    ]
+    for code,words in hints:
+        if any(word in text for word in words):
+            return {"code":code,"flag":COUNTRY_FLAGS[code],"eu":code in EU_COUNTRIES}
+    return {"code":"","flag":"🌐","eu":False}
 
 def scan_site(url):
     _safe_url(url)
@@ -77,7 +109,7 @@ def scan_site(url):
             with urllib.request.urlopen(req,timeout=5) as response: sources.append(response.read(1_000_000).decode("utf-8",errors="replace"))
         except Exception: continue
     level,flags=classify_text("\n".join(sources))
-    return {"url":url,"final_url":final_url,"level":level,"flags":flags,"country":country_from_url(final_url),"scanned_bytes":sum(len(s.encode("utf-8",errors="ignore")) for s in sources),"scripts_scanned":len(sources)-1,"note":"Static inspection only; the site code was not executed."}
+    return {"url":url,"final_url":final_url,"level":level,"flags":flags,"country":country_from_url(final_url,text),"scanned_bytes":sum(len(s.encode("utf-8",errors="ignore")) for s in sources),"scripts_scanned":len(sources)-1,"note":"Static inspection only; the site code was not executed."}
 
 def search_rows(rows,query,limit=20):
     terms=[t.casefold() for t in query.split() if t.strip()]; results=[]
@@ -88,7 +120,7 @@ def search_rows(rows,query,limit=20):
         title=row.get("title") or row.get("url") or row.get("final_url") or "ללא כותרת"; url=row.get("final_url") or row.get("url") or ""
         text=row.get("text") or row.get("description") or ""; snippet=" ".join(text.split())
         if len(snippet)>420: snippet=snippet[:420].rsplit(" ",1)[0]+"…"
-        results.append({"title":title,"url":url,"snippet":snippet,"score":score,"warning":classify(row),"country":country_from_url(url)})
+        results.append({"title":title,"url":url,"snippet":snippet,"score":score,"warning":classify(row),"country":country_from_url(url,text)})
     results.sort(key=lambda x:x["score"],reverse=True); return results[:limit]
 
 class handler(BaseHTTPRequestHandler):
