@@ -89,9 +89,16 @@ function showOSM(query){
   panel.style.display='block';
  }).catch(function(){panel.style.display='none'});
 }
+function calculateQuery(q){
+ var expression=q.trim().replace(/×/g,"*").replace(/[xX]/g,"*").replace(/,/g,"");
+ if(!/^[0-9+\\-*/().%\\s]+$/.test(expression)||!/[+\\-*/%]/.test(expression))return null;
+ try{var value=Function('"use strict";return ('+expression+')')();return typeof value==="number"&&Number.isFinite(value)?value:null}catch(e){return null}
+}
 function triggerSearch(){
  var query=document.getElementById('search-input').value.trim(),container=document.getElementById('results-container');
  if(!query)return;
+ var calculation=calculateQuery(query);
+ if(calculation!==null){container.innerHTML='<div class="result-item"><div class="result-title">🧮 מחשבון</div><div class="result-snippet">'+escapeHtml(query)+' = <strong>'+escapeHtml(String(calculation))+'</strong></div></div>';return;}
  container.innerHTML='<div class="no-results">🔎 מחפש ב־DATA.CSV...</div>';
  var locationValue=document.getElementById('location-input').value.trim(); fetch('/api/search?q='+encodeURIComponent(query)+'&location='+encodeURIComponent(locationValue)).then(function(r){return r.json()}).then(function(data){
   if(data.error){container.innerHTML='<div class="no-results">שגיאה בטעינת מאגר החיפוש.</div>';return}
