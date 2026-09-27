@@ -19,7 +19,7 @@ button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;pad
 .warning.ads{background:#f2c94c;color:#5c4810}.warning.data_selling{background:#d83b32;color:white}.warning.black{background:#111;color:white}.warning.harmful{background:#c40000;color:white;width:32px;height:32px;font-size:1.25rem}
 .harmful-link{color:#a00000}
 .no-results{text-align:center;color:#8c7355;margin-top:40px;font-size:1.05rem}
-.legend{font-size:.8rem;color:#8c7355;margin-top:15px;line-height:1.8}.calculator-box{margin:18px 0;padding:16px 20px;border:1px solid #dcc7b1;border-radius:12px;background:#f7efe5;text-align:center}.calculator-title{font-size:.85rem;color:#8c7355}.calculator-expression{font-size:1rem;color:#6e563b;margin-top:4px}.calculator-result{font-size:1.8rem;font-weight:bold;color:#8c5b1b;margin-top:3px}.map-panel{display:none;margin:20px 0;border:1px solid #dcc7b1;border-radius:12px;overflow:hidden;background:#fff}.map-panel iframe{display:block;width:100%;height:430px;border:0}.map-title{padding:10px 14px;font-weight:bold;color:#8c5b1b}.map-note{padding:7px 14px;font-size:.75rem;color:#8c7355}
+.legend{font-size:.8rem;color:#8c7355;margin-top:15px;line-height:1.8}.dictionary-box{margin:18px 0;padding:16px 20px;border:1px solid #dcc7b1;border-radius:12px;background:#f7efe5;text-align:right}.dictionary-title{font-size:.85rem;color:#8c7355}.dictionary-word{font-size:1.35rem;font-weight:bold;color:#8c5b1b;margin-top:4px}.dictionary-pos{font-size:.8rem;color:#a6732e;margin-top:2px}.dictionary-sense{margin-top:8px;line-height:1.5}.dictionary-translation{margin-top:8px;color:#6e563b}.dictionary-example{font-size:.82rem;color:#8c7355;margin-top:4px}.calculator-box{margin:18px 0;padding:16px 20px;border:1px solid #dcc7b1;border-radius:12px;background:#f7efe5;text-align:center}.calculator-title{font-size:.85rem;color:#8c7355}.calculator-expression{font-size:1rem;color:#6e563b;margin-top:4px}.calculator-result{font-size:1.8rem;font-weight:bold;color:#8c5b1b;margin-top:3px}.map-panel{display:none;margin:20px 0;border:1px solid #dcc7b1;border-radius:12px;overflow:hidden;background:#fff}.map-panel iframe{display:block;width:100%;height:430px;border:0}.map-title{padding:10px 14px;font-weight:bold;color:#8c5b1b}.map-note{padding:7px 14px;font-size:.75rem;color:#8c7355}
 .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10;align-items:center;justify-content:center}
 .modal{background:#fffaf4;border:3px solid #c40000;border-radius:16px;max-width:520px;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.35);text-align:center}
 .modal h2{color:#a00000;margin-top:0}.modal button{margin:8px}.cancel{background:#777}.continue{background:#a00000}
@@ -35,7 +35,7 @@ button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;pad
 </div>
 <div class="status" id="status-text">טוען את מאגר החיפוש המקומי...</div>
 <div class="search-box"><input type="text" id="search-input" placeholder="חפש ב־DATA.CSV..." autofocus><button onclick="triggerSearch()">חפש</button></div><div class="location-box"><input type="text" id="location-input" placeholder="מיקום (יישוב או מדינה) — אופציונלי"><button onclick="triggerSearch()">התאם</button></div><div class="location-note">המיקום הוא לבחירת המשתמש ומשמש רק להתאמת סדר התוצאות.</div>
-<div id="calculator-box" class="calculator-box" style="display:none"><div class="calculator-title">🧮 מחשבון</div><div class="calculator-expression" id="calculator-expression"></div><div class="calculator-result" id="calculator-result"></div></div><div id="map-panel" class="map-panel"><div class="map-title">📍 מיקומים שנמצאו ב־OpenStreetMap</div><iframe id="osm-map" title="OpenStreetMap map" loading="lazy"></iframe><div class="map-note">© OpenStreetMap contributors · ODbL</div></div><div id="results-container"></div>
+<div id="dictionary-box" class="dictionary-box" style="display:none"><div class="dictionary-title">📖 מילון</div><div class="dictionary-word" id="dictionary-word"></div><div id="dictionary-content"></div></div><div id="calculator-box" class="calculator-box" style="display:none"><div class="calculator-title">🧮 מחשבון</div><div class="calculator-expression" id="calculator-expression"></div><div class="calculator-result" id="calculator-result"></div></div><div id="map-panel" class="map-panel"><div class="map-title">📍 מיקומים שנמצאו ב־OpenStreetMap</div><iframe id="osm-map" title="OpenStreetMap map" loading="lazy"></iframe><div class="map-note">© OpenStreetMap contributors · ODbL</div></div><div id="results-container"></div>
 <div class="legend">⚠️ צהוב: פרסומות · ⚠️ אדום: מכירת נתונים · ⚠️ שחור: תוכן בוטה/אלים/גזעני · <b style="color:#a00000">❗</b> אדום גדול: אתר שסומן כמזיק</div>
 </div>
 
@@ -98,6 +98,25 @@ function triggerSearch(){
  var query=document.getElementById('search-input').value.trim(),container=document.getElementById('results-container');
  var calculation=calculateQuery(query);
  var calcBox=document.getElementById('calculator-box');
+ var dictionaryBox=document.getElementById('dictionary-box');
+ dictionaryBox.style.display='none';
+ document.getElementById('dictionary-content').innerHTML='';
+ if(query.split(/\\s+/).length<=4 && query.length<=80){
+  fetch('/api/dictionary?q='+encodeURIComponent(query)).then(function(r){return r.json()}).then(function(data){
+   if(!data.found)return;
+   document.getElementById('dictionary-word').textContent=data.word;
+   var html='';
+   data.entries.forEach(function(entry){
+    if(entry.pos)html+='<div class="dictionary-pos">'+escapeHtml(entry.pos)+'</div>';
+    (entry.senses||[]).forEach(function(sense){
+     (sense.glosses||[]).forEach(function(gloss){html+='<div class="dictionary-sense">'+escapeHtml(gloss)+'</div>'});
+     (sense.examples||[]).forEach(function(example){html+='<div class="dictionary-example">“'+escapeHtml(example)+'”</div>'});
+    });
+    (entry.translations||[]).forEach(function(t){html+='<div class="dictionary-translation">↔ '+escapeHtml(t.word)+'</div>'});
+   });
+   if(html){document.getElementById('dictionary-content').innerHTML=html;dictionaryBox.style.display='block';}
+  }).catch(function(){});
+ }
  if(calculation!==null){
   calcBox.style.display='block';
   document.getElementById('calculator-expression').textContent=query;
