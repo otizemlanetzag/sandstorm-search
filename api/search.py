@@ -7,6 +7,11 @@ import socket
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+
+try:
+    import deepl
+except ImportError:
+    deepl = None
 from http.server import BaseHTTPRequestHandler
 
 from ask import load_data
@@ -130,6 +135,36 @@ def search_rows(rows,query,location="",limit=20):
         if len(snippet)>420: snippet=snippet[:420].rsplit(" ",1)[0]+"…"
         results.append({"title":title,"url":url,"snippet":snippet,"score":score,"warning":classify(row),"country":country_from_url(url,text)})
     results.sort(key=lambda x:x["score"],reverse=True); return results[:limit]
+
+
+def _translation_language(text):
+    return "EN-US" if re.search(r"[\\u0590-\\u05FF]", text) else "HE"
+
+def dictionary_lookup(query):
+    """Translate a short search query with the embedded DeepL Python SDK."""
+    query = query.strip()
+    if not query or len(query) > 500:
+        return {"found": False, "word": query, "entries": []}
+    if deepl is None:
+        return {"found": False, "word": query, "entries": [], "error": "DeepL SDK is not installed."}
+    import os
+    auth_key = os.environ.get("DEEPL_AUTH_KEY", "").strip()
+    if not auth_key:
+        return {"found": False, "word": query, "entries": [], "configured": False}
+    client = deepl.DeepLClient(auth_key, send_platform_info=False)
+    target = _translation_language(query)
+    result = client.translate_text(query, target_lang=target)
+    translated = result.text if hasattr(result, "text") else str(result)
+    detected = getattr(result, "detected_source_lang", "") or ""
+    return {
+        "found": bool(translated),
+        "word": query,
+        "source_language": detected,
+        "target_language": target,
+        "entries": [{"translation": translated}],
+        "provider": "DeepL Python SDK"
+    }
+
 
 class handler(BaseHTTPRequestHandler):
     def _send_json(self,payload,status=200):
