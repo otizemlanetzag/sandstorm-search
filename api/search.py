@@ -137,6 +137,11 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(body)
     def do_GET(self):
         parsed=urllib.parse.urlparse(self.path)
+        if parsed.path=="/api/dictionary":
+            query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()
+            if not query:return self._send_json({"found":False,"word":"","entries":[]})
+            try:return self._send_json(dictionary_lookup(query))
+            except Exception as exc:return self._send_json({"found":False,"word":query,"entries":[],"error":str(exc)},502)
         if parsed.path=="/api/search":
             query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()\n            location=urllib.parse.parse_qs(parsed.query).get("location",[""])[0].strip()
             if not query:return self._send_json({"results":[],"query":""})
