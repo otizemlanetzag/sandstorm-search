@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Infinity Sandstorm Search</title>
 <style>
 body{font-family:'Segoe UI',Tahoma,sans-serif;background:#f5ece1;margin:0;padding:20px;color:#4a3b32}
@@ -13,10 +12,17 @@ h1{color:#c08a3e;margin:0;font-size:2.2rem}.subtitle{font-size:.85rem;color:#8c7
 .privacy-badge{display:inline-block;background:#e6d5c3;color:#6e563b;padding:4px 10px;border-radius:20px;font-size:.75rem;font-weight:bold;margin-bottom:15px}
 .search-box{display:flex;gap:12px;margin-bottom:30px}input{flex:1;padding:14px 22px;font-size:1.05rem;border:2px solid #dcc7b1;border-radius:10px;outline:none;background:#fffcf9;color:#4a3b32}
 input:focus{border-color:#c08a3e}button{padding:14px 30px;font-size:1.05rem;background:#c08a3e;color:white;border:0;border-radius:10px;cursor:pointer;font-weight:bold}
-button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;padding:22px 0}
-.result-title{font-size:1.15rem;color:#8c5b1b;text-decoration:none;font-weight:bold;display:block}.result-url{font-size:.82rem;color:#a6732e;direction:ltr;text-align:left;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:5px 0}
+button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;padding:22px 0;position:relative}
+.result-title{font-size:1.15rem;color:#8c5b1b;text-decoration:none;font-weight:bold}.result-url{font-size:.82rem;color:#a6732e;direction:ltr;text-align:left;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:5px 0}
 .result-meta{font-size:.85rem;color:#8c7355;margin:6px 0}.result-snippet{font-size:.95rem;color:#5c4a3c;line-height:1.6}
+.warning{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-weight:900;margin-left:8px;vertical-align:middle}
+.warning.ads{background:#f2c94c;color:#5c4810}.warning.data_selling{background:#d83b32;color:white}.warning.black{background:#111;color:white}.warning.harmful{background:#c40000;color:white;width:32px;height:32px;font-size:1.25rem}
+.harmful-link{color:#a00000}
 .no-results{text-align:center;color:#8c7355;margin-top:40px;font-size:1.05rem}
+.legend{font-size:.8rem;color:#8c7355;margin-top:15px;line-height:1.8}
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10;align-items:center;justify-content:center}
+.modal{background:#fffaf4;border:3px solid #c40000;border-radius:16px;max-width:520px;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.35);text-align:center}
+.modal h2{color:#a00000;margin-top:0}.modal button{margin:8px}.cancel{background:#777}.continue{background:#a00000}
 @media(max-width:600px){.container{margin:10px auto;padding:20px}.search-box{flex-direction:column}button{width:100%}}
 </style>
 </head>
@@ -24,17 +30,25 @@ button:hover{background:#a6732e}.result-item{border-bottom:1px solid #ebdccb;pad
 <div class="container">
 <div class="brand-section">
 <img src="logo.png" alt="Infinity Sandstorm Logo" class="logo-img">
-<h1>⏳ Infinity Sandstorm Search</h1>
-<div class="subtitle">Sandstorm Search Engine</div>
+<h1>⏳ Infinity Sandstorm Search</h1><div class="subtitle">Sandstorm Search Engine</div>
 <div class="privacy-badge">🔒 ללא מעקב</div>
 </div>
 <div class="status" id="status-text">טוען את מאגר החיפוש המקומי...</div>
-<div class="search-box">
-<input type="text" id="search-input" placeholder="חפש ב־DATA.CSV..." autofocus>
-<button onclick="triggerSearch()">חפש</button>
-</div>
+<div class="search-box"><input type="text" id="search-input" placeholder="חפש ב־DATA.CSV..." autofocus><button onclick="triggerSearch()">חפש</button></div>
 <div id="results-container"></div>
+<div class="legend">⚠️ צהוב: פרסומות · ⚠️ אדום: מכירת נתונים · ⚠️ שחור: תוכן בוטה/אלים/גזעני · <b style="color:#a00000">❗</b> אדום גדול: אתר שסומן כמזיק</div>
 </div>
+
+<div class="modal-backdrop" id="harm-modal">
+<div class="modal">
+<h2>❗ אזהרה: אתר שסומן כמזיק</h2>
+<p>המאגר סימן את האתר הזה כעלול להזיק. מומלץ לא להמשיך אליו אם אינך בטוח שהוא בטוח.</p>
+<p id="harm-url"></p>
+<button class="cancel" onclick="closeWarning()">ביטול</button>
+<button class="continue" id="continue-btn">המשך לאתר</button>
+</div>
+</div>
+
 <script>
 function loadStatus(){
  fetch('/api/status').then(function(r){return r.json()}).then(function(data){
@@ -44,6 +58,19 @@ function loadStatus(){
 loadStatus();
 document.getElementById('search-input').addEventListener('keypress',function(e){if(e.key==='Enter')triggerSearch()});
 function escapeHtml(value){var d=document.createElement('div');d.textContent=value||'';return d.innerHTML}
+function warningMarkup(type){
+ if(type==='ads')return '<span class="warning ads" title="אתר שמכיל פרסומות">!</span>';
+ if(type==='data_selling')return '<span class="warning data_selling" title="אתר שמסומן כמוכר נתונים">!</span>';
+ if(type==='black')return '<span class="warning black" title="תוכן בוטה/לא חוקי/אלים/גזעני">!</span>';
+ if(type==='harmful')return '<span class="warning harmful" title="אתר שסומן כמזיק">!</span>';
+ return '';
+}
+function openWarning(url){
+ document.getElementById('harm-url').textContent=url;
+ document.getElementById('harm-modal').style.display='flex';
+ document.getElementById('continue-btn').onclick=function(){window.open(url,'_blank','noopener,noreferrer');closeWarning()};
+}
+function closeWarning(){document.getElementById('harm-modal').style.display='none'}
 function triggerSearch(){
  var query=document.getElementById('search-input').value.trim(),container=document.getElementById('results-container');
  if(!query)return;
@@ -54,10 +81,10 @@ function triggerSearch(){
   container.innerHTML='';
   data.results.forEach(function(item){
    var div=document.createElement('div');div.className='result-item';
-   var title=escapeHtml(item.title||item.url),url=escapeHtml(item.url||'');
-   div.innerHTML='<a class="result-title" href="'+url+'" target="_blank" rel="noopener noreferrer">'+title+'</a>'+
-   '<span class="result-url">'+url+'</span>'+
-   '<div class="result-meta">📊 התאמות: <strong>'+item.score+'</strong></div>'+
+   var title=escapeHtml(item.title||item.url),url=escapeHtml(item.url||''),warn=warningMarkup(item.warning);
+   var link=item.warning==='harmful'?'#':url;
+   div.innerHTML='<span>'+warn+'</span><a class="result-title '+(item.warning==='harmful'?'harmful-link':'')+'" href="'+link+'" '+(item.warning==='harmful'?'onclick="openWarning(\''+url.replace(/'/g,"\\'")+'\');return false;"':'target="_blank" rel="noopener noreferrer"')+'>'+title+'</a>'+
+   '<span class="result-url">'+url+'</span><div class="result-meta">📊 התאמות: <strong>'+item.score+'</strong></div>'+
    '<div class="result-snippet">'+escapeHtml(item.snippet||'')+'</div>';
    container.appendChild(div);
   });
