@@ -70,7 +70,8 @@ def init_db():
                     token_hash BYTEA PRIMARY KEY,
                     supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
                     expires_at TIMESTAMPTZ NOT NULL,
-                    used BOOLEAN NOT NULL DEFAULT FALSE
+                    used BOOLEAN NOT NULL DEFAULT FALSE,
+                    approved_at TIMESTAMPTZ
                 )
             """)
             cur.execute("""
@@ -93,6 +94,7 @@ def init_db():
                 )
             """)
             cur.execute("ALTER TABLE sandstorm_accounts ADD COLUMN IF NOT EXISTS birth_date DATE")
+            cur.execute("ALTER TABLE sandstorm_pairings ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
             cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_expiry_idx ON sandstorm_sessions(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_proof_account_idx ON sandstorm_proof_submissions(supervised_id)")
         conn.commit()
@@ -344,7 +346,7 @@ def handler_main(handler):
             if not raw:return response(handler,{"error":"Missing pairing token."},400)
             with db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT supervised_id FROM sandstorm_pairings WHERE token_hash=%s AND expires_at>NOW() AND used=FALSE",(token_hash(raw),))
+                    cur.execute("SELECT supervised_id FROM sandstorm_pairings WHERE token_hash=%s AND expires_at>NOW() AND used=FALSE AND approved_at IS NOT NULL",(token_hash(raw),))
                     row=cur.fetchone()
                     if not row:return response(handler,{"error":"QR code expired or already used."},400)
                     cur.execute("UPDATE sandstorm_pairings SET used=TRUE WHERE token_hash=%s",(token_hash(raw),))
@@ -366,11 +368,14 @@ def handler_main(handler):
 
         if action=="approve" and handler.command=="POST":
             acc=current_account(handler)
-            sup=supervision_for(acc["account_id"]) if acc else None
-            if not acc or not sup or sup["supervised_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervised account can approve."},403)
+            token=data.get("pairing_token","")
+            if not acc or not token:return response(handler,{"error":"Missing pairing approval."},400)
             with db() as conn:
-                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_supervision SET child_approved_at=NOW() WHERE supervised_id=%s",(acc["account_id"],))
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE sandstorm_pairings SET approved_at=NOW() WHERE token_hash=%s AND supervised_id=%s AND expires_at>NOW() AND used=FALSE",(token_hash(token),acc["account_id"]))
+                    changed=cur.rowcount
                 conn.commit()
+            if not changed:return response(handler,{"error":"QR code expired or invalid."},400)
             return response(handler,{"ok":True})
 
         if action=="release-code" and handler.command=="POST":
@@ -397,11 +402,21 @@ def handler_main(handler):
             enabled=bool(data.get("enabled",True)); sup=supervision_for(acc["account_id"])
             if sup and sup["supervised_id"]==acc["account_id"] and not enabled:
                 return response(handler,{"error":"SAFESEARCH נעול. נדרש קוד שחרור של המפקח."},403)
-            settings=acc["settings"] or {}; settings["safeSearch"]=enabled
-            if enabled:new_release_code(acc["account_id"]) if sup else None
+            target_id=acc["account_id"]
+            if sup and sup["supervisor_id"]==acc["account_id"]:
+                target_id=sup["supervised_id"]
+            if sup and sup["supervised_id"]==acc["account_id"] and not enabled:
+                return response(handler,{"error":"SAFESEARCH נעול. נדרש קוד שחרור של המפקח."},403)
             with db() as conn:
-                with conn.cursor() as cur:cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",(json.dumps(settings),acc["account_id"]))
+                with conn.cursor() as cur:
+                    cur.execute("SELECT settings FROM sandstorm_accounts WHERE account_id=%s",(target_id,))
+                    row=cur.fetchone()
+                    settings=row["settings"] or {}
+                    settings["safeSearch"]=enabled
+                    cur.execute("UPDATE sandstorm_accounts SET settings=%s,updated_at=NOW() WHERE account_id=%s",(json.dumps(settings),target_id))
                 conn.commit()
+            if enabled and sup:
+                new_release_code(target_id)
             return response(handler,{"ok":True,"safeSearch":enabled})
 
         if action=="stop" and handler.command=="POST":
