@@ -1,41 +1,31 @@
-# Cross-device Sandstorm accounts
+# Sandstorm Search — account storage setup
 
-Sandstorm accounts are identified only by the user's secret phrase. The phrase itself is never stored in PostgreSQL.
+The account system no longer requires PostgreSQL or `DATABASE_URL`.
 
-## Server setup
+It now stores the account database as a **private SQLite database serialized inside Vercel Blob**. Vercel Blob is persistent storage, while SQLite remains the query engine used by `api/account.py`.
 
-The account API uses PostgreSQL through the `DATABASE_URL` environment variable.
+## Vercel setup
 
-1. Create a PostgreSQL database with any trusted PostgreSQL provider.
-2. Copy its connection string.
-3. Add this environment variable to the deployment:
+1. Open the Sandstorm Search project in Vercel.
+2. Open **Storage**.
+3. Create a **Blob** store.
+4. Choose **Private** access.
+5. Connect the store to this Vercel project.
+6. Redeploy.
 
-```
-DATABASE_URL=postgresql://...
-```
+The connected Blob store supplies the credentials needed by the Vercel Python SDK. **No `DATABASE_URL` is required.**
 
-4. Redeploy Sandstorm.
+## Security
 
-The API creates these tables automatically on first account request:
+The Blob store must be **Private**. Account data, sessions, pairing data, release-code hashes, and proof data are not intended to be public.
 
-- `sandstorm_accounts`
-- `sandstorm_sessions`
+The secret phrase itself is never sent to the server.
 
-No manual SQL migration is required.
+## Note
 
-## How the account works
+The account database is serialized to Blob on each account operation. This avoids requiring PostgreSQL, but a relational database is still preferable for very high traffic because it provides stronger concurrent-write guarantees.
 
-- The browser derives a stable SHA-256 account identifier from the secret phrase.
-- A per-account PBKDF2 salt is used to derive the authentication proof.
-- Only the derived identifier, salts, and a server-side verifier are stored.
-- The raw secret phrase is never sent to the server and is never stored.
-- After login, the server gives the browser an HttpOnly, Secure, SameSite session cookie.
-- Settings are stored in PostgreSQL, so the same secret phrase can log in from another computer.
-- Logging out removes the server session.
-- The secret phrase remains the only user-provided identifying information.
+## Proof uploads
 
-## Important
+The account endpoint accepts proof uploads up to 4 MB because Vercel Functions impose a request-body limit. The proof itself is stored in the private Blob store.
 
-This replaces the previous browser-only `localStorage` account system. Existing local-only accounts cannot automatically be migrated because the server never received their secret phrase. On the first use of the new system, create the account again with the same secret phrase.
-
-Use HTTPS in production so the Secure session cookie works correctly.
