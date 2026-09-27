@@ -11,8 +11,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-import psycopg
-from psycopg.rows import dict_row
+import sqlite3
+from vercel.blob import BlobClient
+from vercel.blob.errors import BlobNotFoundError
 
 ACCOUNT_ID_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 SESSION_TTL = 60 * 60 * 24 * 30
@@ -28,11 +29,107 @@ ALLOWED_SETTINGS = {
     "language", "saveHistory", "syncSettings",
 }
 
+BLOB_DB_PATH = "sandstorm/account.sqlite3"
+BLOB_ACCESS = "private"
+
+class _CompatCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def _sql(self, sql):
+        sql = sql.replace("NOW()+INTERVAL '30 days'", "datetime('now','+30 days')")
+        sql = sql.replace("NOW()+INTERVAL '10 minutes'", "datetime('now','+10 minutes')")
+        sql = sql.replace("NOW()+INTERVAL '365 days'", "datetime('now','+365 days')")
+        sql = sql.replace("NOW()", "CURRENT_TIMESTAMP")
+        return sql.replace("::jsonb", "")
+
+    def execute(self, sql, params=()):
+        return self._cursor.execute(self._sql(sql), params)
+
+    def executemany(self, sql, seq):
+        return self._cursor.executemany(self._sql(sql), seq)
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def _row(self, row):
+        if row is None:
+            return None
+        value = {k: row[k] for k in row.keys()}
+        if isinstance(value.get("settings"), str):
+            try:
+                value["settings"] = json.loads(value["settings"])
+            except Exception:
+                pass
+        return value
+
+    def fetchone(self):
+        return self._row(self._cursor.fetchone())
+
+    def fetchall(self):
+        return [self._row(row) for row in self._cursor.fetchall()]
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._cursor.__exit__(exc_type, exc, tb)
+
+class _BlobSQLite:
+    def __init__(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        raw = self._read_blob()
+        if raw:
+            self.conn.deserialize(raw)
+
+    def _read_blob(self):
+        try:
+            result = BlobClient().get(BLOB_DB_PATH, access=BLOB_ACCESS)
+        except BlobNotFoundError:
+            return None
+        if result is None or result.status_code != 200 or result.stream is None:
+            return None
+        return b"".join(result.stream)
+
+    def cursor(self):
+        return _CompatCursor(self.conn.cursor())
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        try:
+            self.conn.commit()
+            BlobClient().put(
+                BLOB_DB_PATH,
+                self.conn.serialize(),
+                access=BLOB_ACCESS,
+                content_type="application/octet-stream",
+                overwrite=True,
+            )
+        finally:
+            self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+        return False
+
 def db():
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL is not configured")
-    return psycopg.connect(url, connect_timeout=8, row_factory=dict_row)
+    return _BlobSQLite()
 
 def init_db():
     with db() as conn:
@@ -40,64 +137,61 @@ def init_db():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_accounts (
                     account_id TEXT PRIMARY KEY,
-                    client_salt BYTEA NOT NULL,
-                    verifier_salt BYTEA NOT NULL,
-                    verifier BYTEA NOT NULL,
-                    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    client_salt BLOB NOT NULL,
+                    verifier_salt BLOB NOT NULL,
+                    verifier BLOB NOT NULL,
+                    settings TEXT NOT NULL DEFAULT '{}',
                     birth_date DATE,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_sessions (
-                    token_hash BYTEA PRIMARY KEY,
+                    token_hash BLOB PRIMARY KEY,
                     account_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    expires_at TIMESTAMPTZ NOT NULL
+                    expires_at TEXT NOT NULL
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_supervision (
                     supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
                     supervisor_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    child_approved_at TIMESTAMPTZ,
-                    active BOOLEAN NOT NULL DEFAULT TRUE
+                    linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    child_approved_at TEXT,
+                    active INTEGER NOT NULL DEFAULT 1
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_pairings (
-                    token_hash BYTEA PRIMARY KEY,
+                    token_hash BLOB PRIMARY KEY,
                     supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    expires_at TIMESTAMPTZ NOT NULL,
-                    used BOOLEAN NOT NULL DEFAULT FALSE,
-                    approved_at TIMESTAMPTZ
+                    expires_at TEXT NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0,
+                    approved_at TEXT
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_release_codes (
                     supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    code_hash BYTEA NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    code_hash BLOB NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sandstorm_proof_submissions (
-                    id BIGSERIAL PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
                     proof_type TEXT NOT NULL CHECK (proof_type IN ('donation','volunteering')),
                     file_name TEXT NOT NULL,
                     content_type TEXT NOT NULL,
-                    file_data BYTEA NOT NULL,
+                    file_data BLOB NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            cur.execute("ALTER TABLE sandstorm_accounts ADD COLUMN IF NOT EXISTS birth_date DATE")
-            cur.execute("ALTER TABLE sandstorm_pairings ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
             cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_expiry_idx ON sandstorm_sessions(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_proof_account_idx ON sandstorm_proof_submissions(supervised_id)")
-        conn.commit()
 
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
@@ -204,7 +298,13 @@ def code_ok(supervised_id,code):
     return bool(row and hmac.compare_digest(bytes(row["code_hash"]),hashlib.sha256(code.encode()).digest()))
 
 def adult(birth_date):
-    if not birth_date: return False
+    if not birth_date:
+        return False
+    if isinstance(birth_date, str):
+        try:
+            birth_date = date.fromisoformat(birth_date)
+        except ValueError:
+            return False
     today=date.today()
     return (today.year-birth_date.year) - ((today.month,today.day)<(birth_date.month,birth_date.day)) >= 18
 
