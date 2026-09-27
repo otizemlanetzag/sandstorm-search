@@ -71,7 +71,25 @@ function openWarning(url){
  document.getElementById('continue-btn').onclick=function(){window.open(url,'_blank','noopener,noreferrer');closeWarning()};
 }
 function closeWarning(){document.getElementById('harm-modal').style.display='none'}
-function looksLikePlace(q){return /(^|\s)(street|st|road|rd|avenue|ave|park|city|town|village|רחוב|כביש|שדרה|פארק|עיר|כפר)\b/i.test(q)||q.split(/\s+/).length<=4}\nfunction showOSM(query){\n if(!looksLikePlace(query))return;\n var panel=document.getElementById('map-panel');\n var iframe=document.getElementById('osm-map');\n var encoded=encodeURIComponent(query);\n fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&q='+encoded,{headers:{'Accept':'application/json'}}).then(function(r){return r.json()}).then(function(items){\n  if(!items.length){panel.style.display='none';return;}\n  var first=items[0],lat=Number(first.lat),lon=Number(first.lon),delta=.02;\n  var bbox=(lon-delta)+','+(lat-delta)+','+(lon+delta)+','+(lat+delta);\n  iframe.src='https://www.openstreetmap.org/export/embed.html?bbox='+encodeURIComponent(bbox)+'&layer=mapnik&marker='+lat+'%2C'+lon;\n  panel.style.display='block';\n }).catch(function(){panel.style.display='none'});\n}\nfunction triggerSearch(){
+function looksLikePlace(q){
+ return /\\b(in|near|around|by|parks|park|hospitals|hospital|water|fountains|fountain|schools|school|restaurants|restaurant|cafes|cafe|pharmacies|pharmacy|stations|station|parking|parks|playgrounds|playground)\\b/i.test(q)
+   || /(באזור|באיזור|ליד|קרוב|פארקים|פארק|בתי חולים|בית חולים|ברזיות|ברזיה|בתי ספר|בית ספר|מסעדות|מסעדה|בתי קפה|בית קפה|בתי מרקחת|בית מרקחת|תחנות|תחנה|חניונים|חניון|גני משחקים|גן משחקים)/i.test(q)
+   || q.split(/\\s+/).length<=4;
+}
+function showOSM(query){
+ if(!looksLikePlace(query))return;
+ var panel=document.getElementById('map-panel');
+ var iframe=document.getElementById('osm-map');
+ var encoded=encodeURIComponent(query);
+ fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&q='+encoded,{headers:{'Accept':'application/json'}}).then(function(r){return r.json()}).then(function(items){
+  if(!items.length){panel.style.display='none';return;}
+  var first=items[0],lat=Number(first.lat),lon=Number(first.lon),delta=.02;
+  var bbox=(lon-delta)+','+(lat-delta)+','+(lon+delta)+','+(lat+delta);
+  iframe.src='https://www.openstreetmap.org/export/embed.html?bbox='+encodeURIComponent(bbox)+'&layer=mapnik&marker='+lat+'%2C'+lon;
+  panel.style.display='block';
+ }).catch(function(){panel.style.display='none'});
+}
+function triggerSearch(){
  var query=document.getElementById('search-input').value.trim(),container=document.getElementById('results-container');
  if(!query)return;
  container.innerHTML='<div class="no-results">🔎 מחפש ב־DATA.CSV...</div>';
