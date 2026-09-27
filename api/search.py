@@ -112,11 +112,18 @@ def scan_site(url):
     level,flags=classify_text("\n".join(sources))
     return {"url":url,"final_url":final_url,"level":level,"flags":flags,"country":country_from_url(final_url,text),"scanned_bytes":sum(len(s.encode("utf-8",errors="ignore")) for s in sources),"scripts_scanned":len(sources)-1,"note":"Static inspection only; the site code was not executed."}
 
-def search_rows(rows,query,limit=20):
+def location_score(row, location):
+    if not location:
+        return 0
+    needle=location.casefold().strip()
+    hay=" ".join(str(row.get(f,"") or "") for f in ("title","description","text","url","final_url")).casefold()
+    return 4 if needle in hay else 0
+
+def search_rows(rows,query,location="",limit=20):
     terms=[t.casefold() for t in query.split() if t.strip()]; results=[]
     for row in rows:
         searchable=" ".join(str(row.get(f,"") or "") for f in ("title","description","text","url","final_url")).casefold()
-        score=sum(searchable.count(t) for t in terms)
+        score=sum(searchable.count(t) for t in terms)\n        score += location_score(row, location)
         if not score: continue
         title=row.get("title") or row.get("url") or row.get("final_url") or "ללא כותרת"; url=row.get("final_url") or row.get("url") or ""
         text=row.get("text") or row.get("description") or ""; snippet=" ".join(text.split())
@@ -131,10 +138,10 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed=urllib.parse.urlparse(self.path)
         if parsed.path=="/api/search":
-            query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()
+            query=urllib.parse.parse_qs(parsed.query).get("q",[""])[0].strip()\n            location=urllib.parse.parse_qs(parsed.query).get("location",[""])[0].strip()
             if not query:return self._send_json({"results":[],"query":""})
             try:
-                rows=load_data(); return self._send_json({"results":search_rows(rows,query),"query":query,"total_indexed":len(rows)})
+                rows=load_data(); return self._send_json({"results":search_rows(rows,query,location),"query":query,"total_indexed":len(rows)})
             except Exception as exc:return self._send_json({"error":"Unable to load the Sandstorm data index.","details":str(exc),"results":[]},500)
         if parsed.path=="/api/scan":
             url=urllib.parse.parse_qs(parsed.query).get("url",[""])[0].strip()
