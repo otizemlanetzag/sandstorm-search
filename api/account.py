@@ -6,14 +6,14 @@ import hmac
 import json
 import os
 import secrets
-import threading
-from pathlib import Path
 from datetime import date
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 import sqlite3
+from vercel.blob import BlobClient
+from vercel.blob.errors import BlobNotFoundError
 
 ACCOUNT_ID_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 SESSION_TTL = 60 * 60 * 24 * 30
@@ -28,6 +28,51 @@ ALLOWED_SETTINGS = {
     "showWarnings", "warnBeforeHarmful", "calmMode", "fontSize",
     "language", "saveHistory", "syncSettings",
 }
+
+class _CompatCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def _sql(self, sql):
+        sql = sql.replace("%s", "?")
+        sql = sql.replace("NOW()+INTERVAL '30 days'", "datetime('now','+30 days')")
+        sql = sql.replace("NOW()+INTERVAL '10 minutes'", "datetime('now','+10 minutes')")
+        sql = sql.replace("NOW()+INTERVAL '365 days'", "datetime('now','+365 days')")
+        sql = sql.replace("NOW()", "CURRENT_TIMESTAMP")
+        return sql.replace("::jsonb", "")
+
+    def execute(self, sql, params=()):
+        return self._cursor.execute(self._sql(sql), params)
+
+    def executemany(self, sql, seq):
+        return self._cursor.executemany(self._sql(sql), seq)
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def _row(self, row):
+        if row is None:
+            return None
+        value = {k: row[k] for k in row.keys()}
+        if isinstance(value.get("settings"), str):
+            try:
+                value["settings"] = json.loads(value["settings"])
+            except Exception:
+                pass
+        return value
+
+    def fetchone(self):
+        return self._row(self._cursor.fetchone())
+
+    def fetchall(self):
+        return [self._row(row) for row in self._cursor.fetchall()]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._cursor.__exit__(exc_type, exc, tb)
 
 BLOB_DB_PATH = "sandstorm/account.sqlite3"
 BLOB_ACCESS = "private"
