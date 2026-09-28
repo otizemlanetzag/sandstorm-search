@@ -18,7 +18,7 @@ from vercel.blob.errors import BlobNotFoundError
 ACCOUNT_ID_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 SESSION_TTL = 60 * 60 * 24 * 30
 MAX_JSON_BODY = 12000
-MAX_UPLOAD = 5 * 1024 * 1024
+MAX_UPLOAD = 4 * 1024 * 1024
 PBKDF2_ITERATIONS = 600000
 RELEASE_CODE_TTL = 60 * 60 * 24 * 365
 PAIRING_TTL = 10 * 60
@@ -88,7 +88,8 @@ class _BlobSQLite:
 
     def _read_blob(self):
         try:
-            result = BlobClient().get(BLOB_DB_PATH, access=BLOB_ACCESS)
+            with BlobClient() as client:
+                result = client.get(BLOB_DB_PATH, access=BLOB_ACCESS, use_cache=False)
         except BlobNotFoundError:
             return None
         if result is None or result.status_code != 200 or result.stream is None:
@@ -106,10 +107,11 @@ class _BlobSQLite:
 
     def close(self):
         try:
-            BlobClient().put(BLOB_DB_PATH, self.conn.serialize(),
-                             access=BLOB_ACCESS,
-                             content_type="application/octet-stream",
-                             overwrite=True)
+            with BlobClient() as client:
+                client.put(BLOB_DB_PATH, self.conn.serialize(),
+                           access=BLOB_ACCESS,
+                           content_type="application/octet-stream",
+                           overwrite=True)
         finally:
             self.conn.close()
 
@@ -123,6 +125,64 @@ class _BlobSQLite:
             self.commit()
         self.close()
         return False
+
+def init_db():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    client_salt BLOB NOT NULL,
+                    verifier_salt BLOB NOT NULL,
+                    verifier BLOB NOT NULL,
+                    settings TEXT NOT NULL DEFAULT '{}',
+                    birth_date TEXT,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_sessions (
+                    token_hash BLOB PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_supervision (
+                    supervised_id TEXT PRIMARY KEY,
+                    supervisor_id TEXT NOT NULL,
+                    child_approved_at TEXT,
+                    active INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_pairings (
+                    token_hash BLOB PRIMARY KEY,
+                    supervised_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0,
+                    approved_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_release_codes (
+                    supervised_id TEXT PRIMARY KEY,
+                    code_hash BLOB NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_proof_submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    supervised_id TEXT NOT NULL,
+                    proof_type TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    file_data BLOB NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
 def db():
     return _BlobSQLite()
@@ -197,7 +257,7 @@ def response(handler, payload, status=200, cookie=None):
 def supervision_for(account_id):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM sandstorm_supervision WHERE supervised_id=%s AND active=TRUE", (account_id,))
+            cur.execute("SELECT * FROM sandstorm_supervision WHERE (supervised_id=%s OR supervisor_id=%s) AND active=TRUE", (account_id, account_id))
             return cur.fetchone()
 
 def make_pairing(supervised_id):
@@ -227,7 +287,7 @@ def code_ok(supervised_id,code):
         return False
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT code_hash FROM sandstorm_release_codes WHERE supervised_id=%s",(supervised_id,))
+            cur.execute("SELECT code_hash FROM sandstorm_release_codes WHERE supervised_id=%s AND created_at>datetime('now','-365 days')",(supervised_id,))
             row=cur.fetchone()
     return bool(row and hmac.compare_digest(bytes(row["code_hash"]),hashlib.sha256(code.encode()).digest()))
 
@@ -504,7 +564,7 @@ def handler_main(handler):
     except Exception:
         return response(handler,{"error":"Account service is not configured or temporarily unavailable."},503)
 
-class handler(BaseHTTPRequestHandler):
+class AccountHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/account/"):
             handler_main(self)
