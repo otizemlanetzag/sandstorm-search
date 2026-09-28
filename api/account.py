@@ -283,7 +283,7 @@ def new_release_code(supervised_id):
     return code
 
 def code_ok(supervised_id,code):
-    if not __import__("re").fullmatch(r"d{4}",code or ""):
+    if not __import__("re").fullmatch(r"\d{4}",code or ""):
         return False
     with db() as conn:
         with conn.cursor() as cur:
