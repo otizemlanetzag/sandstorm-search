@@ -6,14 +6,14 @@ import hmac
 import json
 import os
 import secrets
+import threading
+from pathlib import Path
 from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 import sqlite3
-from vercel.blob import BlobClient
-from vercel.blob.errors import BlobNotFoundError
 
 ACCOUNT_ID_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 SESSION_TTL = 60 * 60 * 24 * 30
@@ -29,14 +29,19 @@ ALLOWED_SETTINGS = {
     "language", "saveHistory", "syncSettings",
 }
 
-BLOB_DB_PATH = "sandstorm/account.sqlite3"
-BLOB_ACCESS = "private"
+DATA_DIR = Path(os.environ.get("SANDSTORM_DATA_DIR", "/data/sandstorm"))
+if not DATA_DIR.exists():
+    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SQLITE_PATH = DATA_DIR / "account.sqlite3"
+_DB_LOCK = threading.RLock()
 
 class _CompatCursor:
     def __init__(self, cursor):
         self._cursor = cursor
 
     def _sql(self, sql):
+        sql = sql.replace("%s", "?")
         sql = sql.replace("NOW()+INTERVAL '30 days'", "datetime('now','+30 days')")
         sql = sql.replace("NOW()+INTERVAL '10 minutes'", "datetime('now','+10 minutes')")
         sql = sql.replace("NOW()+INTERVAL '365 days'", "datetime('now','+365 days')")
@@ -77,23 +82,17 @@ class _CompatCursor:
     def __exit__(self, exc_type, exc, tb):
         return self._cursor.__exit__(exc_type, exc, tb)
 
-class _BlobSQLite:
+class _SQLite:
     def __init__(self):
-        self.conn = sqlite3.connect(":memory:")
+        self.conn = sqlite3.connect(
+            SQLITE_PATH,
+            timeout=20,
+            check_same_thread=False,
+        )
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
-        raw = self._read_blob()
-        if raw:
-            self.conn.deserialize(raw)
-
-    def _read_blob(self):
-        try:
-            result = BlobClient().get(BLOB_DB_PATH, access=BLOB_ACCESS)
-        except BlobNotFoundError:
-            return None
-        if result is None or result.status_code != 200 or result.stream is None:
-            return None
-        return b"".join(result.stream)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=20000")
 
     def cursor(self):
         return _CompatCursor(self.conn.cursor())
@@ -105,93 +104,25 @@ class _BlobSQLite:
         self.conn.rollback()
 
     def close(self):
-        try:
-            self.conn.commit()
-            BlobClient().put(
-                BLOB_DB_PATH,
-                self.conn.serialize(),
-                access=BLOB_ACCESS,
-                content_type="application/octet-stream",
-                overwrite=True,
-            )
-        finally:
-            self.conn.close()
+        self.conn.close()
 
     def __enter__(self):
+        _DB_LOCK.acquire()
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type:
-            self.rollback()
-        else:
-            self.commit()
-        self.close()
+        try:
+            if exc_type:
+                self.rollback()
+            else:
+                self.commit()
+        finally:
+            self.close()
+            _DB_LOCK.release()
         return False
 
 def db():
-    return _BlobSQLite()
-
-def init_db():
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_accounts (
-                    account_id TEXT PRIMARY KEY,
-                    client_salt BLOB NOT NULL,
-                    verifier_salt BLOB NOT NULL,
-                    verifier BLOB NOT NULL,
-                    settings TEXT NOT NULL DEFAULT '{}',
-                    birth_date DATE,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_sessions (
-                    token_hash BLOB PRIMARY KEY,
-                    account_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    expires_at TEXT NOT NULL
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_supervision (
-                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    supervisor_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    child_approved_at TEXT,
-                    active INTEGER NOT NULL DEFAULT 1
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_pairings (
-                    token_hash BLOB PRIMARY KEY,
-                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    expires_at TEXT NOT NULL,
-                    used INTEGER NOT NULL DEFAULT 0,
-                    approved_at TEXT
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_release_codes (
-                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    code_hash BLOB NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sandstorm_proof_submissions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
-                    proof_type TEXT NOT NULL CHECK (proof_type IN ('donation','volunteering')),
-                    file_name TEXT NOT NULL,
-                    content_type TEXT NOT NULL,
-                    file_data BLOB NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_expiry_idx ON sandstorm_sessions(expires_at)")
-            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_proof_account_idx ON sandstorm_proof_submissions(supervised_id)")
+    return _SQLite()
 
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
