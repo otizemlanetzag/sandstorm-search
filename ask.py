@@ -11,6 +11,7 @@ import csv
 import io
 import os
 import urllib.request
+from urllib.error import URLError
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,7 @@ def load_data() -> list[dict[str, Any]]:
         if LOCAL_DATA_FILE.exists():
             return read_local_data()
         return download_data()
-    except (OSError, urllib.error.URLError):
+    except (OSError, URLError):
         # If the network is unavailable, continue using the last local copy.
         return read_local_data()
 
