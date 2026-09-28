@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import secrets
+import time
 from datetime import date
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
@@ -478,6 +479,7 @@ def handler_main(handler):
             if not acc:return response(handler,{"error":"Not signed in."},401)
             sup=supervision_for(acc["account_id"])
             if not sup or sup["supervisor_id"]!=acc["account_id"]:return response(handler,{"error":"Only the supervisor can request the code."},403)
+            time.sleep(10)
             code=new_release_code(sup["supervised_id"])
             return response(handler,{"ok":True,"delay_seconds":10,"code":code})
 
