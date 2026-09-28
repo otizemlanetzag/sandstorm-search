@@ -1,8 +1,8 @@
 """Local Sandstorm data loader.
 
-Downloads DATA.CSV from snake-crawl into Sandstorm's local data directory,
-then reads and searches the local copy. The remote file is refreshed each
-time load_data() is called successfully.
+Downloads DATA.CSV from snake-crawl into a writable Sandstorm cache,
+then reads and searches the local copy. The remote file is downloaded when
+the cache is missing or unavailable.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def download_data() -> list[dict[str, Any]]:
     with urllib.request.urlopen(request, timeout=60) as response:
         remote_data = response.read()
 
-    # Keep a persistent local copy inside Sandstorm.
+    # Keep the current invocation's local cache inside Sandstorm.
     LOCAL_DATA_FILE.write_bytes(remote_data)
 
     return read_local_data()
