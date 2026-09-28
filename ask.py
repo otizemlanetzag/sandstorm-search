@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,9 @@ DATA_URL = "https://raw.githubusercontent.com/otizemlanetzag/snake-crawl/main/DA
 USER_AGENT = "Sandstorm Search/1.0"
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get("SANDSTORM_DATA_DIR", "/data/sandstorm"))
+if not DATA_DIR.exists():
+    DATA_DIR = BASE_DIR / "data"
 LOCAL_DATA_FILE = DATA_DIR / "DATA.CSV"
 
 
