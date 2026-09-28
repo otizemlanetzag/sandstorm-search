@@ -18,7 +18,7 @@ import time
 from collections import defaultdict, deque
 
 from ask import load_data
-from sandbox import run_in_sandbox
+from api.sandbox import run_in_sandbox
 
 
 EU_COUNTRIES = {
@@ -164,7 +164,8 @@ def search_rows(rows,query,location="",limit=20):
     terms=[t.casefold() for t in query.split() if t.strip()]; results=[]
     for row in rows:
         searchable=" ".join(str(row.get(f,"") or "") for f in ("title","description","text","url","final_url")).casefold()
-        score=sum(searchable.count(t) for t in terms)\n        score += location_score(row, location)
+        score=sum(searchable.count(t) for t in terms)
+        score += location_score(row, location)
         if not score: continue
         title=row.get("title") or row.get("url") or row.get("final_url") or "ללא כותרת"; url=row.get("final_url") or row.get("url") or ""
         text=row.get("text") or row.get("description") or ""; snippet=" ".join(text.split())
@@ -205,7 +206,7 @@ def dictionary_lookup(query):
     }
 
 
-class handler(BaseHTTPRequestHandler):
+class SearchHandler(BaseHTTPRequestHandler):
     server_version = "SandstormSearch"
     sys_version = ""
 
