@@ -1,36 +1,28 @@
-from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-from api.account import handler as AccountHandler
-from api.search import handler as SearchHandler
+from api.account import AccountHandler
+from api.search import SearchHandler
 
 
-def _routed_path(path):
-    parsed = urlparse(path)
-    params = parse_qsl(parsed.query, keep_blank_values=True)
-    route = next((v for k, v in params if k == "route"), "")
-    if not route:
-        return parsed.path, parsed.query
+class handler(SearchHandler):
+    def _route(self):
+        parsed = urlparse(self.path)
+        params = parse_qsl(parsed.query, keep_blank_values=True)
+        route = next((value for key, value in params if key == "route"), "")
+        remaining = [(key, value) for key, value in params if key != "route"]
+        path = "/" + route.lstrip("/") if route else parsed.path
+        query = urlencode(remaining)
+        return path, query
 
-    remaining = [(k, v) for k, v in params if k != "route"]
-    clean_path = "/" + route.lstrip("/")
-    query = urlencode(remaining)
-    return "/api/" + clean_path.lstrip("/"), query
-
-
-class handler(BaseHTTPRequestHandler):
     def _dispatch(self, method):
         original_path = self.path
-        path, query = _routed_path(original_path)
+        path, query = self._route()
         self.path = path + (("?" + query) if query else "")
-
-        if self.path.startswith("/api/account/"):
-            target = AccountHandler
-        else:
-            target = SearchHandler
-
         try:
-            getattr(target, method)(self)
+            if self.path.startswith("/api/account/"):
+                getattr(AccountHandler, method)(self)
+            else:
+                getattr(SearchHandler, method)(self)
         finally:
             self.path = original_path
 
