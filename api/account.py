@@ -89,7 +89,7 @@ class _BlobSQLite:
     def _read_blob(self):
         try:
             with BlobClient() as client:
-                result = client.get(BLOB_DB_PATH, access=BLOB_ACCESS, use_cache=False)
+                result = client.get(BLOB_DB_PATH, access=BLOB_ACCESS)
         except BlobNotFoundError:
             return None
         if result is None or result.status_code != 200 or result.stream is None:
@@ -111,7 +111,8 @@ class _BlobSQLite:
                 client.put(BLOB_DB_PATH, self.conn.serialize(),
                            access=BLOB_ACCESS,
                            content_type="application/octet-stream",
-                           overwrite=True)
+                           add_random_suffix=False,
+                           allow_overwrite=True)
         finally:
             self.conn.close()
 
