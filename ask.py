@@ -18,9 +18,7 @@ DATA_URL = "https://raw.githubusercontent.com/otizemlanetzag/snake-crawl/main/DA
 USER_AGENT = "Sandstorm Search/1.0"
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("SANDSTORM_DATA_DIR", "/data/sandstorm"))
-if not DATA_DIR.exists():
-    DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get("SANDSTORM_DATA_DIR", "/tmp/sandstorm"))
 LOCAL_DATA_FILE = DATA_DIR / "DATA.CSV"
 
 
@@ -52,8 +50,10 @@ def read_local_data() -> list[dict[str, Any]]:
 
 
 def load_data() -> list[dict[str, Any]]:
-    """Refresh the local DATA.CSV, then work from the local copy."""
+    """Use the local cache when available; download only when missing."""
     try:
+        if LOCAL_DATA_FILE.exists():
+            return read_local_data()
         return download_data()
     except (OSError, urllib.error.URLError):
         # If the network is unavailable, continue using the last local copy.
