@@ -10,7 +10,7 @@ class handler(SearchHandler):
         params = parse_qsl(parsed.query, keep_blank_values=True)
         route = next((value for key, value in params if key == "route"), "")
         remaining = [(key, value) for key, value in params if key != "route"]
-        path = "/" + route.lstrip("/") if route else parsed.path
+        path = "/api/" + route.lstrip("/") if route else parsed.path
         query = urlencode(remaining)
         return path, query
 
