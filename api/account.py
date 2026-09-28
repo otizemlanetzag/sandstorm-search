@@ -8,7 +8,7 @@ import os
 import secrets
 import threading
 from pathlib import Path
-from datetime import date, datetime, timezone
+from datetime import date
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
@@ -123,6 +123,69 @@ class _SQLite:
 
 def db():
     return _SQLite()
+
+def init_db():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    client_salt BLOB NOT NULL,
+                    verifier_salt BLOB NOT NULL,
+                    verifier BLOB NOT NULL,
+                    settings TEXT NOT NULL DEFAULT '{}',
+                    birth_date DATE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_sessions (
+                    token_hash BLOB PRIMARY KEY,
+                    account_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    expires_at TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_supervision (
+                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    supervisor_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    child_approved_at TEXT,
+                    active INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_pairings (
+                    token_hash BLOB PRIMARY KEY,
+                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    expires_at TEXT NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0,
+                    approved_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_release_codes (
+                    supervised_id TEXT PRIMARY KEY REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    code_hash BLOB NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sandstorm_proof_submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    supervised_id TEXT NOT NULL REFERENCES sandstorm_accounts(account_id) ON DELETE CASCADE,
+                    proof_type TEXT NOT NULL CHECK (proof_type IN ('donation','volunteering')),
+                    file_name TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    file_data BLOB NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_sessions_expiry_idx ON sandstorm_sessions(expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS sandstorm_proof_account_idx ON sandstorm_proof_submissions(supervised_id)")
+
 
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
