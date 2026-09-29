@@ -2,6 +2,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 from api.account import AccountHandler
 from api.search import SearchHandler
+from api.snake_crawl import SnakeCrawlHandler
 
 
 class handler(SearchHandler):
@@ -21,6 +22,8 @@ class handler(SearchHandler):
         try:
             if self.path.startswith("/api/account/"):
                 getattr(AccountHandler, method)(self)
+            elif self.path.startswith("/api/snake-crawl/"):
+                getattr(SnakeCrawlHandler, method)(self)
             else:
                 getattr(SearchHandler, method)(self)
         finally:
