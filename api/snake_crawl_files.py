@@ -1,9 +1,10 @@
 import time
 import urllib.request
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
-RAW="https://raw.githubusercontent.com/otizemlanetzag/snake-crawl/main/DATA.CSV"
+DATA_PATH=Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
 WINDOW=300
 _last={}
 
@@ -20,8 +21,7 @@ class SnakeCrawlFilesHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Download limited to once every 5 minutes.")
             return
         try:
-            req=urllib.request.Request(RAW,headers={"User-Agent":"Sandstorm-Snake-Crawl-Files/1.0"})
-            with urllib.request.urlopen(req,timeout=30) as r: data=r.read()
+            data=DATA_PATH.read_bytes()
             _last[key]=now
             self.send_response(200)
             self.send_header("Content-Type","text/csv; charset=utf-8")
