@@ -5,6 +5,7 @@
     { "source": "/api/status", "destination": "/api/index?route=status" },
     { "source": "/api/dictionary", "destination": "/api/index?route=dictionary" },
     { "source": "/api/scan", "destination": "/api/index?route=scan" },
-    { "source": "/api/account/:path*", "destination": "/api/index?route=account/:path*" }
+    { "source": "/api/account/:path*", "destination": "/api/index?route=account/:path*" },
+    { "source": "/api/snake-crawl/:path*", "destination": "/api/index?route=snake-crawl/:path*" }
   ]
 }
