@@ -89,7 +89,7 @@ $("login").onsubmit=async e=>{
  e.preventDefault();
  const error=$("loginError"); error.textContent="";
  try{
-  const r=await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:$("code").value})});
+  const r=await fetch("/api/snake-crawl/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:$("code").value})});
   const data=await r.json();
   if(data.authenticated){
    $("gate").classList.add("hidden");$("panel").classList.remove("hidden");$("code").value="";
@@ -113,7 +113,7 @@ $("form").onsubmit=async e=>{
  while(queue.length&&rows.length<maxPages&&!stopRequested){
   const current=queue.splice(0,batch);
   try{
-   const r=await fetch("/api/crawl",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls:current,depths:Object.fromEntries(current.map(u=>[u,depths.get(u)||0])),max_depth:maxDepth,same_domain:same,seed_host:new URL(seed).host})});
+   const r=await fetch("/api/snake-crawl/crawl",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls:current,depths:Object.fromEntries(current.map(u=>[u,depths.get(u)||0])),max_depth:maxDepth,same_domain:same,seed_host:new URL(seed).host})});
    const data=await r.json();if(!r.ok)throw Error(data.error||"API error");
    for(const item of data.results){
     rows.push(item);stats();
@@ -123,7 +123,7 @@ $("form").onsubmit=async e=>{
    }
   }catch(err){log("REQUEST ERROR: "+err.message,"err");break}
   stats();
-  if(rows){try{await fetch("/api/save_csv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows})})}catch(err){log("DATA.CSV SAVE ERROR: "+err.message,"err")}}
+  if(rows){try{await fetch("/api/snake-crawl/save_csv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows})})}catch(err){log("DATA.CSV SAVE ERROR: "+err.message,"err")}}
   await new Promise(r=>setTimeout(r,delay*1000));
  }
  running=false;$("start").disabled=false;$("stop").disabled=true;$("message").textContent=stopRequested?"Stopped":"Completed";
@@ -136,11 +136,11 @@ $("advStop").onclick=()=>advStop=true;
 $("advancedForm").onsubmit=async e=>{e.preventDefault();if(advRunning)return;advRunning=true;advStop=false;advRows=[];$("advLog").textContent="";$("advDownload").hidden=true;
 const total=Math.min(100,Math.max(1,+$("advTotal").value)),batch=Math.min(10,Math.max(1,+$("advBatch").value)),maxCharacters=Math.min(20,Math.max(1,+$("advLength").value)),delay=Math.max(0,+$("advDelay").value);
 $("advStart").disabled=true;$("advStop").disabled=false;$("advMessage").textContent="Discovery running...";
-while(advRows.length<total&&!advStop){const count=Math.min(batch,total-advRows.length);try{const r=await fetch("/api/advanced",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count,max_characters:maxCharacters})});const data=await r.json();if(!r.ok)throw Error(data.error||"API error");
+while(advRows.length<total&&!advStop){const count=Math.min(batch,total-advRows.length);try{const r=await fetch("/api/snake-crawl/advanced",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({count,max_characters:maxCharacters})});const data=await r.json();if(!r.ok)throw Error(data.error||"API error");
 for(const item of data.results||[]){advRows.push(item);const line=document.createElement("div");line.textContent=item.status===200?"FOUND  "+item.url:"ERROR  "+item.url+" — "+(item.error||item.status);line.className=item.status===200?"ok":"err";$("advLog").prepend(line)}
 $("advTested").textContent=advRows.length;$("advFound").textContent=advRows.filter(x=>x.status===200).length;$("advErrors").textContent=advRows.filter(x=>x.status==="error").length;$("advRemaining").textContent=Math.max(0,total-advRows.length);$("advFill").style.width=(advRows.length/total*100)+"%";
 }catch(err){const line=document.createElement("div");line.textContent="REQUEST ERROR: "+err.message;line.className="err";$("advLog").prepend(line);break}if(!advStop)await new Promise(r=>setTimeout(r,delay*1000))}
-if(advRows.length){try{await fetch("/api/save_csv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:advRows})})}catch(err){const line=document.createElement("div");line.textContent="DATA.CSV SAVE ERROR: "+err.message;line.className="err";$("advLog").prepend(line)}}
+if(advRows.length){try{await fetch("/api/snake-crawl/save_csv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:advRows})})}catch(err){const line=document.createElement("div");line.textContent="DATA.CSV SAVE ERROR: "+err.message;line.className="err";$("advLog").prepend(line)}}
 advRunning=false;$("advStart").disabled=false;$("advStop").disabled=true;$("advMessage").textContent=advStop?"Stopped":"Completed";
 if(advRows.length){const fields=["url","final_url","status","content_type","content"];const esc=v=>String(v??"").replaceAll('"','""').replace(/[\r\n]+/g," ");const out="\ufeff"+[fields,...advRows.map(r=>fields.map(f=>r[f]??""))].map(a=>a.map(v=>'"'+esc(v)+'"').join(",")).join("\r\n");$("advDownload").href=URL.createObjectURL(new Blob([out],{type:"text/csv;charset=utf-8"}));$("advDownload").download="Advanced_DATA.CSV";$("advDownload").hidden=false}};
 </script></body></html>
