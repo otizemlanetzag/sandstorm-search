@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = req.headers.authorization || "";
 
-  if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+  if (!cronSecret) {\n    return res.status(500).json({ error: "CRON_SECRET is not configured" });\n  }\n\n  if (auth !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
