@@ -8,8 +8,13 @@
     { "source": "/api/account/:path*", "destination": "/api/index?route=account/:path*" },
     { "source": "/api/snake-crawl/:path*", "destination": "/api/index?route=snake-crawl/:path*" },
     { "source": "/api/snake-crawl-files/:path*", "destination": "/api/index?route=snake-crawl-files/:path*" },
+    { "source": "/sandstorm_search", "destination": "/sandstorm_search/index.html" },
+    { "source": "/sandstorm_search/", "destination": "/sandstorm_search/index.html" },
     { "source": "/snake_crawl", "destination": "/snake-crawl/index.html" },
+    { "source": "/snake_crawl/", "destination": "/snake-crawl/index.html" },
     { "source": "/snake_crawl/open", "destination": "/snake-crawl-demo/index.html" },
-    { "source": "/snake_crawl/files", "destination": "/snake-crawl-files/index.html" }
+    { "source": "/snake_crawl/open/", "destination": "/snake-crawl-demo/index.html" },
+    { "source": "/snake_crawl/files", "destination": "/snake-crawl-files/index.html" },
+    { "source": "/snake_crawl/files/", "destination": "/snake-crawl-files/index.html" }
   ]
 }
