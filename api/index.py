@@ -4,8 +4,6 @@ from api.account import AccountHandler
 from api.search import SearchHandler
 from api.snake_crawl import SnakeCrawlHandler
 from api.snake_crawl_files import SnakeCrawlFilesHandler
-from api.snake_crawl import SnakeCrawlHandler
-from api.snake_crawl_files import SnakeCrawlFilesHandler
 
 
 class handler(SearchHandler):
