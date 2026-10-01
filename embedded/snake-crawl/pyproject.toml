@@ -1,8 +1,0 @@
-[project]
-name = "snake-crawl"
-version = "0.1.0"
-description = "Snake Crawl web crawler"
-requires-python = ">=3.12,<3.15"
-dependencies = [
-    "fastapi>=0.115,<1"
-]
