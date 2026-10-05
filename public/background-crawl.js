@@ -1,10 +1,6 @@
 (() => {
-  const KEY = "sandstorm-background-crawl-disabled";
-  const isDisabled = () => localStorage.getItem(KEY) === "1";
-
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = isDisabled() ? "הפעל סריקה אצלי" : "הפסק סריקה אצלי";
   Object.assign(button.style, {
     position: "fixed",
     left: "12px",
@@ -19,23 +15,77 @@
     cursor: "pointer",
     opacity: "0.9"
   });
-
-  button.onclick = () => {
-    if (isDisabled()) {
-      localStorage.removeItem(KEY);
-      button.textContent = "הפסק סריקה אצלי";
-      start();
-    } else {
-      localStorage.setItem(KEY, "1");
-      button.textContent = "הפעל סריקה אצלי";
-      clearInterval(timer);
-    }
-  };
-
   document.body.appendChild(button);
 
+  let enabled = true;
+  let timer = null;
+  let accountSettings = null;
+
+  async function loadAccountSetting() {
+    try {
+      const response = await fetch("/api/account/me", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin"
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data.logged_in) {
+        button.textContent = "הפסק סריקה אצלי";
+        return;
+      }
+      accountSettings = data.settings && typeof data.settings === "object"
+        ? data.settings
+        : {};
+      enabled = accountSettings.backgroundCrawl !== false;
+      button.textContent = enabled ? "הפסק סריקה אצלי" : "הפעל סריקה אצלי";
+      if (enabled) start();
+    } catch (_) {
+      button.textContent = "הפסק סריקה אצלי";
+    }
+  }
+
+  async function saveSetting(value) {
+    if (!accountSettings) {
+      button.textContent = "יש להתחבר כדי לשמור את ההגדרה";
+      setTimeout(() => {
+        button.textContent = enabled ? "הפסק סריקה אצלי" : "הפעל סריקה אצלי";
+      }, 2500);
+      return false;
+    }
+
+    const settings = { ...accountSettings, backgroundCrawl: value };
+    try {
+      const response = await fetch("/api/account/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ settings })
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      accountSettings = data.settings || settings;
+      enabled = value;
+      button.textContent = enabled ? "הפסק סריקה אצלי" : "הפעל סריקה אצלי";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  button.onclick = async () => {
+    button.disabled = true;
+    const next = !enabled;
+    const saved = await saveSetting(next);
+    if (saved) {
+      if (next) start();
+      else stop();
+    }
+    button.disabled = false;
+  };
+
   async function scanOnce() {
-    if (isDisabled() || document.hidden) return;
+    if (!enabled || document.hidden) return;
     try {
       await fetch("/api/snake-crawl/background", {
         method: "GET",
@@ -45,12 +95,19 @@
     } catch (_) {}
   }
 
-  let timer = null;
+  function stop() {
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
   function start() {
-    clearInterval(timer);
+    stop();
     scanOnce();
     timer = setInterval(scanOnce, 30000);
   }
 
-  start();
+  button.textContent = "הפסק סריקה אצלי";
+  loadAccountSetting();
 })();
