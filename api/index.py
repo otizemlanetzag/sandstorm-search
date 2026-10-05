@@ -1,12 +1,8 @@
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-from api.account import AccountHandler
-from api.search import SearchHandler
-from api.snake_crawl import SnakeCrawlHandler
-from api.snake_crawl_files import SnakeCrawlFilesHandler
 
-
-class handler(SearchHandler):
+class handler(BaseHTTPRequestHandler):
     def _route(self):
         parsed = urlparse(self.path)
         params = parse_qsl(parsed.query, keep_blank_values=True)
@@ -22,13 +18,24 @@ class handler(SearchHandler):
         self.path = path + (("?" + query) if query else "")
         try:
             if self.path.startswith("/api/account/"):
+                from api.account import AccountHandler
                 getattr(AccountHandler, method)(self)
             elif self.path.startswith("/api/snake-crawl-files/"):
+                from api.snake_crawl_files import SnakeCrawlFilesHandler
                 getattr(SnakeCrawlFilesHandler, method)(self)
             elif self.path.startswith("/api/snake-crawl/"):
+                from api.snake_crawl import SnakeCrawlHandler
                 getattr(SnakeCrawlHandler, method)(self)
             else:
+                from api.search import SearchHandler
                 getattr(SearchHandler, method)(self)
+        except Exception as exc:
+            if not self.wfile:
+                raise
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(("Function error: " + str(exc)).encode("utf-8", "replace"))
         finally:
             self.path = original_path
 
