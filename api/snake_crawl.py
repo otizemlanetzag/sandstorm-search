@@ -1,4 +1,6 @@
 import csv
+import random
+from pathlib import Path
 import io
 import ipaddress
 import json
@@ -105,6 +107,46 @@ def _json(h,status,payload,extra=None):
     h.send_response(status); h.send_header("Content-Type","application/json; charset=utf-8"); h.send_header("Cache-Control","no-store")
     for k,v in (extra or {}).items(): h.send_header(k,v)
     h.send_header("Content-Length",str(len(raw))); h.end_headers(); h.wfile.write(raw)
+
+class BackgroundCrawlHandler(BaseHTTPRequestHandler):
+    """Small public, opt-out browser-driven slice of the normal crawler.
+
+    It never accepts a user-supplied target. It selects one public URL from
+    Sandstorm's local shared DATA.CSV and crawls exactly one page.
+    """
+
+    def do_GET(self):
+        if urlparse(self.path).path.rstrip("/") != "/api/snake-crawl/background":
+            _json(self, 404, {"error": "Unknown endpoint"})
+            return
+
+        data_path = Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
+        try:
+            with data_path.open("r", encoding="utf-8-sig", newline="") as f:
+                urls = []
+                for row in csv.DictReader(f):
+                    url = (row.get("url") or row.get("final_url") or "").strip()
+                    if url and _safe_public_url(url):
+                        urls.append(url)
+
+            if not urls:
+                _json(self, 503, {"error": "No crawl targets available"})
+                return
+
+            url = random.choice(urls)
+            row, _ = _crawl_one(
+                url,
+                max_depth=0,
+                same_domain=True,
+                seed_host=urlparse(url).netloc,
+            )
+            _json(self, 200, {"ok": True, "result": row})
+        except Exception as exc:
+            _json(self, 502, {"error": "Background crawl failed", "detail": str(exc)})
+
+    def log_message(self, *args):
+        return
+
 
 class SnakeCrawlHandler(BaseHTTPRequestHandler):
     def do_POST(self):
