@@ -20,6 +20,9 @@ class handler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/account/"):
                 from api.account import AccountHandler
                 getattr(AccountHandler, method)(self)
+            elif self.path == "/api/snake-crawl/background":
+                from api.snake_crawl import BackgroundCrawlHandler
+                getattr(BackgroundCrawlHandler, method)(self)
             elif self.path.startswith("/api/snake-crawl-files/"):
                 from api.snake_crawl_files import SnakeCrawlFilesHandler
                 getattr(SnakeCrawlFilesHandler, method)(self)
