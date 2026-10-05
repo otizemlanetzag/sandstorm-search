@@ -15,12 +15,12 @@ from urllib.error import URLError
 from pathlib import Path
 from typing import Any
 
-DATA_URL = "https://raw.githubusercontent.com/otizemlanetzag/snake-crawl/main/DATA.CSV"
+DATA_URL = None  # Sandstorm and Snake Crawl share the same repository; no remote pull is needed.
 USER_AGENT = "Sandstorm Search/1.0"
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SANDSTORM_DATA_DIR", "/tmp/sandstorm"))
-LOCAL_DATA_FILE = DATA_DIR / "DATA.CSV"
+LOCAL_DATA_FILE = BASE_DIR / "embedded" / "snake-crawl" / "DATA.CSV"
 
 
 def download_data() -> list[dict[str, Any]]:
