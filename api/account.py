@@ -27,7 +27,7 @@ ALLOWED_SETTINGS = {
     "location", "saveLocation", "autoMap", "safeSearch", "resultsPerPage",
     "openNewTab", "saveSearches", "targetLanguage", "autoTranslate",
     "showWarnings", "warnBeforeHarmful", "calmMode", "fontSize",
-    "language", "saveHistory", "syncSettings",
+    "language", "saveHistory", "syncSettings", "backgroundCrawl",
 }
 
 class _CompatCursor:
