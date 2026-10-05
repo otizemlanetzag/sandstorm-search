@@ -100,4 +100,4 @@ async function triggerSearch(){const q=$('search-input').value.trim();if(!q)retu
 function showMap(q){if(q.split(/\s+/).length>4)return;fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q),{headers:{Accept:'application/json'}}).then(r=>r.json()).then(a=>{if(!a.length)return;const x=a[0],lat=+x.lat,lon=+x.lon,delta=.02;$('osm-map').src='https://www.openstreetmap.org/export/embed.html?bbox='+(lon-delta)+','+(lat-delta)+','+(lon+delta)+','+(lat+delta)+'&layer=mapnik&marker='+lat+'%2C'+lon;$('map-panel').classList.remove('hidden')}).catch(()=>{})}
 $('search-input').addEventListener('keypress',e=>{if(e.key==='Enter')triggerSearch()});loadStatus();loadMe();
 </script>
-</body></html>
+<script src="/background-crawl.js"></script></body></html>
