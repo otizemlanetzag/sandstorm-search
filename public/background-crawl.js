@@ -32,6 +32,8 @@
       const data = await response.json();
       if (!data.logged_in) {
         button.textContent = "הפסק סריקה אצלי";
+        enabled = true;
+        start();
         return;
       }
       accountSettings = data.settings && typeof data.settings === "object"
