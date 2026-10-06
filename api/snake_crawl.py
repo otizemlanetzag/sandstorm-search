@@ -133,8 +133,13 @@ def _crawl_one(url,max_depth,same_domain,seed_host):
         return {"url":url,"final_url":url,"status":"error","content_type":"error","text":str(e),"links":[],"depth":0,"crawled_at":time.strftime("%Y-%m-%d %H:%M:%S")},[]
 
 def _body(h):
-    n=int(h.headers.get("Content-Length","0"))
-    return json.loads(h.rfile.read(min(n,65536)).decode("utf-8","replace") or "{}")
+    try:
+        n=int(h.headers.get("Content-Length","0"))
+    except ValueError:
+        raise ValueError("Invalid content length")
+    if n <= 0 or n > 65536:
+        raise ValueError("Request body too large")
+    return json.loads(h.rfile.read(n).decode("utf-8","replace") or "{}")
 
 def _json(h,status,payload,extra=None):
     raw=json.dumps(payload,ensure_ascii=False).encode()
@@ -153,6 +158,15 @@ class BackgroundCrawlHandler(BaseHTTPRequestHandler):
         if urlparse(self.path).path.rstrip("/") != "/api/snake-crawl/background":
             _json(self, 404, {"error": "Unknown endpoint"})
             return
+
+        now = time.time()
+        client = self.client_address[0] if self.client_address else "unknown"
+        last = getattr(self.server, "_background_last", {})
+        if now - last.get(client, 0) < 30:
+            _json(self, 429, {"error": "Background crawl is rate limited"})
+            return
+        last[client] = now
+        self.server._background_last = last
 
         data_path = Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
         try:
