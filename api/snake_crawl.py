@@ -120,15 +120,6 @@ class BackgroundCrawlHandler(BaseHTTPRequestHandler):
             _json(self, 404, {"error": "Unknown endpoint"})
             return
 
-        now = time.time()
-        client = self.client_address[0] if self.client_address else "unknown"
-        last = getattr(self.server, "_background_last", {})
-        if now - last.get(client, 0) < 30:
-            _json(self, 429, {"error": "Background crawl is rate limited"})
-            return
-        last[client] = now
-        self.server._background_last = last
-
         data_path = Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
         try:
             with data_path.open("r", encoding="utf-8-sig", newline="") as f:
