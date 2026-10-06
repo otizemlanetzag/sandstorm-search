@@ -76,15 +76,49 @@ def _normalize(u):
     if p.scheme not in ("http","https") or not p.netloc: return None
     return p._replace(scheme=p.scheme.lower(),netloc=p.netloc.lower()).geturl()
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_301(self, req, fp, code, msg, headers): return fp
+    def http_error_302(self, req, fp, code, msg, headers): return fp
+    def http_error_303(self, req, fp, code, msg, headers): return fp
+    def http_error_307(self, req, fp, code, msg, headers): return fp
+    def http_error_308(self, req, fp, code, msg, headers): return fp
+
+
+def _open_safe(url, seed_host=None, same_domain=True, max_redirects=5):
+    current = _normalize(url)
+    for _ in range(max_redirects + 1):
+        if not current or not _safe_public_url(current):
+            raise ValueError("Unsafe redirect target")
+        if same_domain and seed_host and urlparse(current).netloc != seed_host:
+            raise ValueError("Redirect left the selected domain")
+        req = urllib.request.Request(
+            current,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
+            },
+        )
+        opener = urllib.request.build_opener(_NoRedirect())
+        response = opener.open(req, timeout=10)
+        if response.status not in (301, 302, 303, 307, 308):
+            return response, current
+        location = response.headers.get("Location")
+        response.close()
+        if not location:
+            raise ValueError("Redirect without a location")
+        current = _normalize(urljoin(current, location))
+    raise ValueError("Too many redirects")
+
+
 def _crawl_one(url,max_depth,same_domain,seed_host):
     url=_normalize(url)
     if not url: return {"url":"","final_url":"","status":"error","content_type":"error","text":"Invalid URL"},[]
     if not _safe_public_url(url): return {"url":url,"final_url":url,"status":"blocked","content_type":"","text":"Private or local address blocked"},[]
     if same_domain and urlparse(url).netloc!=seed_host: return {"url":url,"final_url":url,"status":"blocked","content_type":"","text":"Outside selected domain"},[]
     try:
-        req=urllib.request.Request(url,headers={"User-Agent":USER_AGENT,"Accept":"text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"})
-        with urllib.request.urlopen(req,timeout=10) as r:
-            raw=r.read(1500000); final=r.geturl(); ctype=r.headers.get_content_type(); charset=r.headers.get_content_charset() or "utf-8"; status=r.status
+        r, final = _open_safe(url, seed_host=seed_host, same_domain=same_domain)
+        with r:
+            raw=r.read(1500000); ctype=r.headers.get_content_type(); charset=r.headers.get_content_charset() or "utf-8"; status=r.status
         if "html" not in ctype and "xhtml" not in ctype:
             return {"url":url,"final_url":final,"status":status,"content_type":ctype,"text":raw[:10000].decode(charset,errors="replace"),"links":[],"depth":0,"crawled_at":time.strftime("%Y-%m-%d %H:%M:%S")},[]
         p=Parser(); p.feed(raw.decode(charset,errors="replace"))
