@@ -213,8 +213,9 @@ class SnakeCrawlHandler(BaseHTTPRequestHandler):
                     label="".join(random.choice(string.ascii_lowercase+string.digits+"-") for _ in range(random.randint(1,maxchars))).strip("-") or "a"
                     u="https://"+label+"."+random.choice(tlds)
                     try:
-                        req=urllib.request.Request(u,headers={"User-Agent":USER_AGENT})
-                        with urllib.request.urlopen(req,timeout=5) as r: results.append({"url":u,"final_url":r.geturl(),"status":r.status,"content_type":r.headers.get("Content-Type",""),"content":re.sub(r"\s+"," ",r.read(100000).decode("utf-8","replace"))[:100000]})
+                        rr, final_url = _open_safe(u, seed_host=urlparse(u).netloc, same_domain=True, max_redirects=3)
+                        with rr:
+                            results.append({"url":u,"final_url":final_url,"status":rr.status,"content_type":rr.headers.get("Content-Type",""),"content":re.sub(r"\s+"," ",rr.read(100000).decode("utf-8","replace"))[:100000]})
                     except Exception as e: results.append({"url":u,"status":"error","error":str(e)})
                 _json(self,200,{"results":results}); return
             if path=="/api/snake-crawl/save_csv":
