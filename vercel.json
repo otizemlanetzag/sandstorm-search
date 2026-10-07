@@ -1,20 +1,73 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/api/search", "destination": "/api/index?route=search" },
-    { "source": "/api/status", "destination": "/api/index?route=status" },
-    { "source": "/api/dictionary", "destination": "/api/index?route=dictionary" },
-    { "source": "/api/scan", "destination": "/api/index?route=scan" },
-    { "source": "/api/account/:path*", "destination": "/api/index?route=account/:path*" },
-    { "source": "/api/snake-crawl/:path*", "destination": "/api/index?route=snake-crawl/:path*" },
-    { "source": "/api/snake-crawl-files/:path*", "destination": "/api/index?route=snake-crawl-files/:path*" },
-    { "source": "/sandstorm_search", "destination": "/sandstorm_search/index.html" },
-    { "source": "/sandstorm_search/", "destination": "/sandstorm_search/index.html" },
-    { "source": "/snake_crawl", "destination": "/snake-crawl/index.html" },
-    { "source": "/snake_crawl/", "destination": "/snake-crawl/index.html" },
-    { "source": "/snake_crawl/open", "destination": "/snake-crawl-demo/index.html" },
-    { "source": "/snake_crawl/open/", "destination": "/snake-crawl-demo/index.html" },
-    { "source": "/snake_crawl/files", "destination": "/snake-crawl-files/index.html" },
-    { "source": "/snake_crawl/files/", "destination": "/snake-crawl-files/index.html" }
-  ]
+    {
+      "source": "/api/search",
+      "destination": "/api/index?route=search"
+    },
+    {
+      "source": "/api/status",
+      "destination": "/api/index?route=status"
+    },
+    {
+      "source": "/api/dictionary",
+      "destination": "/api/index?route=dictionary"
+    },
+    {
+      "source": "/api/scan",
+      "destination": "/api/index?route=scan"
+    },
+    {
+      "source": "/api/account/:path*",
+      "destination": "/api/index?route=account/:path*"
+    },
+    {
+      "source": "/api/snake-crawl/:path*",
+      "destination": "/api/index?route=snake-crawl/:path*"
+    },
+    {
+      "source": "/api/snake-crawl-files/:path*",
+      "destination": "/api/index?route=snake-crawl-files/:path*"
+    },
+    {
+      "source": "/sandstorm_search",
+      "destination": "/sandstorm_search/index.html"
+    },
+    {
+      "source": "/sandstorm_search/",
+      "destination": "/sandstorm_search/index.html"
+    },
+    {
+      "source": "/snake_crawl",
+      "destination": "/snake-crawl/index.html"
+    },
+    {
+      "source": "/snake_crawl/",
+      "destination": "/snake-crawl/index.html"
+    },
+    {
+      "source": "/snake_crawl/open",
+      "destination": "/snake-crawl-demo/index.html"
+    },
+    {
+      "source": "/snake_crawl/open/",
+      "destination": "/snake-crawl-demo/index.html"
+    },
+    {
+      "source": "/snake_crawl/files",
+      "destination": "/snake-crawl-files/index.html"
+    },
+    {
+      "source": "/snake_crawl/files/",
+      "destination": "/snake-crawl-files/index.html"
+    }
+  ],
+  "functions": {
+    "api/index.py": {
+      "includeFiles": [
+        "embedded/snake-crawl/DATA.CSV",
+        "embedded/snake-crawl/**"
+      ]
+    }
+  }
 }
