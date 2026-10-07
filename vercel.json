@@ -3,31 +3,31 @@
   "rewrites": [
     {
       "source": "/api/search",
-      "destination": "/api/index?route=search"
+      "destination": "/api?route=search"
     },
     {
       "source": "/api/status",
-      "destination": "/api/index?route=status"
+      "destination": "/api?route=status"
     },
     {
       "source": "/api/dictionary",
-      "destination": "/api/index?route=dictionary"
+      "destination": "/api?route=dictionary"
     },
     {
       "source": "/api/scan",
-      "destination": "/api/index?route=scan"
+      "destination": "/api?route=scan"
     },
     {
       "source": "/api/account/:path*",
-      "destination": "/api/index?route=account/:path*"
+      "destination": "/api?route=account/:path*"
     },
     {
       "source": "/api/snake-crawl/:path*",
-      "destination": "/api/index?route=snake-crawl/:path*"
+      "destination": "/api?route=snake-crawl/:path*"
     },
     {
       "source": "/api/snake-crawl-files/:path*",
-      "destination": "/api/index?route=snake-crawl-files/:path*"
+      "destination": "/api?route=snake-crawl-files/:path*"
     },
     {
       "source": "/sandstorm_search",
