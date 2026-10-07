@@ -23,6 +23,27 @@ class handler(BaseHTTPRequestHandler):
             elif self.path == "/api/snake-crawl/background":
                 from api.snake_crawl import BackgroundCrawlHandler
                 getattr(BackgroundCrawlHandler, method)(self)
+            elif self.path == "/api/status":
+                import csv
+                from pathlib import Path
+                data_path = Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
+                try:
+                    with data_path.open("r", encoding="utf-8-sig", newline="") as f:
+                        total = max(0, sum(1 for _ in csv.DictReader(f)))
+                    body = ('{"total_crawled":' + str(total) + '}').encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception:
+                    body = b'{"error":"Status unavailable."}'
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
             elif self.path.startswith("/api/snake-crawl-files/"):
                 from api.snake_crawl_files import SnakeCrawlFilesHandler
                 getattr(SnakeCrawlFilesHandler, method)(self)
