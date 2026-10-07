@@ -2,12 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
-      "source": "/api/search",
-      "destination": "/api?route=search"
+      "source": "/api/status",
+      "destination": "/api/status.py"
     },
     {
-      "source": "/api/status",
-      "destination": "/api?route=status"
+      "source": "/api/search",
+      "destination": "/api?route=search"
     },
     {
       "source": "/api/dictionary",
