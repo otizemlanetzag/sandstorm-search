@@ -2,10 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
-      "source": "/api/status",
-      "destination": "/api/status.py"
-    },
-    {
       "source": "/api/search",
       "destination": "/api?route=search"
     },
@@ -67,6 +63,11 @@
       "includeFiles": [
         "embedded/snake-crawl/DATA.CSV",
         "embedded/snake-crawl/**"
+      ]
+    },
+    "api/status.py": {
+      "includeFiles": [
+        "embedded/snake-crawl/DATA.CSV"
       ]
     }
   }
