@@ -1,5 +1,6 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qsl, urlencode, urlparse
+import json
 import csv
 import random
 import time
@@ -9,6 +10,29 @@ _BACKGROUND_LAST = {}
 
 
 class handler(BaseHTTPRequestHandler):
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _guard(self):
+        from api.search import _rate_limited, _client_ip, MAX_REQUEST_TARGET
+        if len(self.path) > MAX_REQUEST_TARGET:
+            self._send_json({"error": "Request is too large."}, 414)
+            return False
+        if _rate_limited(_client_ip(self)):
+            self._send_json({"error": "Too many requests. Please try again shortly."}, 429)
+            return False
+        return True
+
     def _route(self):
         parsed = urlparse(self.path)
         params = parse_qsl(parsed.query, keep_blank_values=True)
