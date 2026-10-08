@@ -1,5 +1,11 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qsl, urlencode, urlparse
+import csv
+import random
+import time
+from pathlib import Path
+
+_BACKGROUND_LAST = {}
 
 
 class handler(BaseHTTPRequestHandler):
@@ -20,9 +26,37 @@ class handler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/account/"):
                 from api.account import AccountHandler
                 getattr(AccountHandler, method)(self)
-            elif self.path == "/api/snake-crawl/background":
-                from api.snake_crawl import BackgroundCrawlHandler
-                getattr(BackgroundCrawlHandler, method)(self)
+            elif self.path == "/api/snake-crawl/background" and method == "do_GET":
+                from api.snake_crawl import _safe_public_url, _crawl_one
+                client = self.client_address[0] if self.client_address else "unknown"
+                now = time.time()
+                if now - _BACKGROUND_LAST.get(client, 0) < 30:
+                    body = b'{"error":"Background crawl is rate limited"}'
+                    self.send_response(429)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers(); self.wfile.write(body)
+                else:
+                    _BACKGROUND_LAST[client] = now
+                    data_path = Path(__file__).resolve().parent.parent / "embedded" / "snake-crawl" / "DATA.CSV"
+                    urls = []
+                    with data_path.open("r", encoding="utf-8-sig", newline="") as f:
+                        for row in csv.DictReader(f):
+                            url = (row.get("url") or row.get("final_url") or "").strip()
+                            if url:
+                                try:
+                                    if _safe_public_url(url): urls.append(url)
+                                except Exception: pass
+                    if not urls:
+                        body = b'{"error":"No crawl targets available"}'
+                        self.send_response(503); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                    else:
+                        url = random.choice(urls)
+                        row, _ = _crawl_one(url, 0, True, urlparse(url).netloc)
+                        import json
+                        body = json.dumps({"ok": True, "result": row}, ensure_ascii=False).encode("utf-8")
+                        self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             elif self.path == "/api/status":
                 import csv
                 from pathlib import Path
